@@ -28,3 +28,5 @@ Thumbs.db
 # 빌드 디렉토리 (예: makefile 빌드 시 사용)
 build/
 bin/
+
+Dockerfile

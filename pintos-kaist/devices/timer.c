@@ -37,7 +37,7 @@ bool sleep_less_func(const struct list_elem *a, const struct list_elem *b, void 
 	struct thread *x =list_entry(a,struct thread, elem);
 	struct thread *y =list_entry(b,struct thread, elem);
 
-	return x->end <= y->end;
+	return x->end < y->end;
 }
 
 /* Sets up the 8254 Programmable Interval Timer (PIT) to
@@ -157,11 +157,12 @@ static void
 timer_interrupt (struct intr_frame *args UNUSED) {
 	ticks++;			// cpu가 돌고 있는 현재 시간 
 	
-	printf("%d\n",list_size(&sleep_list));
+	// printf("%d\n",list_size(&sleep_list));
+
 
 	// for (struct list_elem *e = list_front(&sleep_list);e != list_back(&sleep_list);e =e->next)	
 	while(!list_empty(&sleep_list)){
-		printf("here\n");
+		// printf("here\n");
 		struct list_elem *e;
 		e = list_front(&sleep_list);
 	

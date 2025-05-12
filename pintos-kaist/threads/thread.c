@@ -221,7 +221,7 @@ thread_block (void) {
 	ASSERT (!intr_context ());
 	ASSERT (intr_get_level () == INTR_OFF);
 	thread_current ()->status = THREAD_BLOCKED;
-	schedule ();
+	schedule ();				// cpu는 쉬면 안되기에 스케쥴을 돌려준다.
 }
 
 /* Transitions a blocked thread T to the ready-to-run state.

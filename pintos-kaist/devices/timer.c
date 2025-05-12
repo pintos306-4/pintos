@@ -37,7 +37,7 @@ bool sleep_less_func(const struct list_elem *a, const struct list_elem *b, void 
 	struct thread *x =list_entry(a,struct thread, elem);
 	struct thread *y =list_entry(b,struct thread, elem);
 
-	return x->end<y->end;
+	return x->end <= y->end;
 }
 
 /* Sets up the 8254 Programmable Interval Timer (PIT) to
@@ -102,8 +102,8 @@ timer_elapsed (int64_t then) {
 
 /* Suspends execution for approximately TICKS timer ticks. */
 void
-timer_sleep (int64_t ticks) {
-	int64_t start = timer_ticks ();
+timer_sleep (int64_t ticks) {			/* tick : 잠자는 시간 */
+	int64_t start = timer_ticks ();		/* timer_sleap이 호출됐을 때의 시간 */
 
 	struct thread *current;				/* 현재 쓰레드를 담을 변수 */
 
@@ -115,13 +115,17 @@ timer_sleep (int64_t ticks) {
 
 	// 현재 실행중인 쓰레드를 찾는다. 
 	current = thread_current();
-	// 여기서 쓰레드를 block 처리(이때 현재 실행되는 쓰레드의 상태는 sleep으로 변경됨)
-	thread_block();
-	// timer_sleep을 호출한 쓰레드를 sleep_list에다가 넣어주기
-	list_insert_ordered (&sleep_list, &current->elem,sleep_less_func,NULL);
 
 	int64_t awaketime =start + ticks; //스레드가 일어나야하는 시간
 	current->end = awaketime;
+
+	enum intr_level prev_status = intr_disable();
+	// timer_sleep을 호출한 쓰레드를 sleep_list에다가 넣어주기
+	list_insert_ordered (&sleep_list, &(current->elem),sleep_less_func,NULL);
+	// 여기서 쓰레드를 block 처리(이때 현재 실행되는 쓰레드의 상태는 sleep으로 변경됨)
+	thread_block();
+	intr_set_level(prev_status);
+	
 }
 
 /* Suspends execution for approximately MS milliseconds. */
@@ -152,15 +156,22 @@ timer_print_stats (void) {
 static void
 timer_interrupt (struct intr_frame *args UNUSED) {
 	ticks++;			// cpu가 돌고 있는 현재 시간 
-	struct list_elem *e;
+	
+	printf("%d\n",list_size(&sleep_list));
+
 	// for (struct list_elem *e = list_front(&sleep_list);e != list_back(&sleep_list);e =e->next)	
-	while( e !=list_back(&sleep_list) ){
-		struct thread *t = list_entry(list_front(&sleep_list),struct thread,elem);
-		if (t->end<ticks){
-			thread_unblock(t);//조건을 만족해야하는 애들을 
+	while(!list_empty(&sleep_list)){
+		printf("here\n");
+		struct list_elem *e;
+		e = list_front(&sleep_list);
+	
+		struct thread *t = list_entry(e,struct thread,elem);
+		if (t->end <= ticks){
+			
 			list_pop_front(&sleep_list);
+			thread_unblock(t);//조건을 만족해야하는 애들을 
 		}
-		e = e->next;
+		else break;
 	}
 	thread_tick ();
 }

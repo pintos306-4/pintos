@@ -28,6 +28,8 @@
    that are ready to run but not actually running. */
 static struct list ready_list;
 
+
+
 /* Idle thread. */
 static struct thread *idle_thread;
 
@@ -109,6 +111,7 @@ thread_init (void) {
 	lock_init (&tid_lock);
 	list_init (&ready_list);
 	list_init (&destruction_req);
+	
 
 	/* Set up a thread structure for the running thread. */
 	initial_thread = running_thread ();
@@ -588,3 +591,4 @@ allocate_tid (void) {
 
 	return tid;
 }
+

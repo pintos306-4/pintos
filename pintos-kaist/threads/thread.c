@@ -97,6 +97,10 @@ static uint64_t gdt[3] = { 0, 0x00af9a000000ffff, 0x00cf92000000ffff };
    finishes. */
 
 bool compare_priority(void){
+	/* ready_list가 비어 있으면 아무것도 안 함 */
+    if (list_empty(&ready_list))
+        return;
+
 	struct thread *x = list_entry(list_front(&ready_list),struct thread,elem);
 	struct thread *y = thread_current();
 
@@ -106,8 +110,8 @@ bool compare_priority(void){
 }
 
 bool priority_less_func(const struct list_elem *a, const struct list_elem *b, void *aux){
-	struct thread *x =list_entry(a,struct thread, elem);
-	struct thread *y =list_entry(b,struct thread, elem);
+	const struct thread *x =list_entry(a,struct thread, elem);
+	const struct thread *y =list_entry(b,struct thread, elem);
 
 	return x->priority > y->priority;
 }

@@ -113,9 +113,11 @@ sema_up (struct semaphore *sema) {
 		list_sort(&sema->waiters,priority_less_func,NULL);
 		thread_unblock (list_entry (list_pop_front (&sema->waiters),
 					struct thread, elem));
+
 	}
 	sema->value++;
 	intr_set_level (old_level);
+
 }
 
 static void sema_test_helper (void *sema_);
@@ -277,7 +279,7 @@ cond_init (struct condition *cond) {
 
    bool sema_priority_less_func(const struct list_elem *a, const struct list_elem *b, void *aux){
 	struct semaphore_elem *sema_elem_a  =list_entry(a,struct semaphore_elem, elem);
-	struct semaphore_elem *sema_elem_b  =list_entry(a,struct semaphore_elem, elem);
+	struct semaphore_elem *sema_elem_b  =list_entry(b,struct semaphore_elem, elem);
 
 	if (!list_empty(&sema_elem_a->semaphore.waiters)){
 		return false;
@@ -285,6 +287,8 @@ cond_init (struct condition *cond) {
 
 	struct thread *x = list_entry(list_front(&sema_elem_a->semaphore.waiters),struct thread, elem);
 	struct thread *y = list_entry(list_front(&sema_elem_b->semaphore.waiters),struct thread, elem);
+
+	return x->priority > y->priority;
 }
 
 void

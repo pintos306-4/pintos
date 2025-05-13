@@ -157,10 +157,6 @@ static void
 timer_interrupt (struct intr_frame *args UNUSED) {
 	ticks++;			// cpu가 돌고 있는 현재 시간 
 	
-	// printf("%d\n",list_size(&sleep_list));
-
-
-	// for (struct list_elem *e = list_front(&sleep_list);e != list_back(&sleep_list);e =e->next)	
 	while(!list_empty(&sleep_list)){
 		// printf("here\n");
 		struct list_elem *e;

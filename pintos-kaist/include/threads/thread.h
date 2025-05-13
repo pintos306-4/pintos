@@ -88,12 +88,15 @@ typedef int tid_t;
 struct thread {
 	/* Owned by thread.c. */
 	tid_t tid;                          /* Thread identifier. */
-	enum thread_status status;          /* Thread state. */
+	enum thread_status status;          /* Thread state. 스레드 상태를 ENUM으로 선언 */
 	char name[16];                      /* Name (for debugging purposes). */
-	int priority;                       /* Priority. */
+	int priority;                       /* Priority. PRI_MIN(0)에서 PRI_MAX(63) 사이 범위에 있는 스레드 우선순위 */
+
+	int64_t start;						/* 스레드 시작 시간 */
+	int64_t end;						/* 스레드가 끝나는 시간 (ticks + 스레드가 수행되는 데 필요한 ticks) */
 
 	/* Shared between thread.c and synch.c. */
-	struct list_elem elem;              /* List element. */
+	struct list_elem elem;              /* List element. 스레드를 Doubly-linked-list의 요소로 포함시킬 때 이전, 다음 스레드를 가리키는 요소 */
 
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
@@ -105,7 +108,7 @@ struct thread {
 #endif
 
 	/* Owned by thread.c. */
-	struct intr_frame tf;               /* Information for switching */
+	struct intr_frame tf;               /* Information for switching 컨텍스트 스위칭을 위한 정보를 담는 구조체. 레지스터와 스택 포인터를 포함한다. */
 	unsigned magic;                     /* Detects stack overflow. */
 };
 

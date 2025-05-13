@@ -418,10 +418,10 @@ init_thread (struct thread *t, const char *name, int priority) {
    idle_thread. */
 static struct thread *
 next_thread_to_run (void) {
-	if (list_empty (&ready_list))
-		return idle_thread;
-	else
-		return list_entry (list_pop_front (&ready_list), struct thread, elem);
+	if (list_empty (&ready_list))													//ready_list가 비어있다면
+		return idle_thread;															//idle_thread를 반환
+	else																			//레디큐가 비어있지 않다면
+		return list_entry (list_pop_front (&ready_list), struct thread, elem);		//ready_list의 가장 앞에 위치하는 스레드를 반환
 }
 
 /* Use iretq to launch the thread */

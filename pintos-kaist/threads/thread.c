@@ -62,6 +62,8 @@ static void init_thread (struct thread *, const char *name, int priority);
 static void do_schedule(int status);
 static void schedule (void);
 static tid_t allocate_tid (void);
+bool list_high_priority(const struct list_elem *a, const struct list_elem *b, void *aux);
+bool is_higher_priority(struct thread *t);
 
 /* Returns true if T appears to point to a valid thread. */
 #define is_thread(t) ((t) != NULL && (t)->magic == THREAD_MAGIC)
@@ -235,14 +237,39 @@ thread_block (void) {
 void
 thread_unblock (struct thread *t) {
 	enum intr_level old_level;
+	struct thread* now_thread = thread_current();
 
 	ASSERT (is_thread (t));
 
-	old_level = intr_disable ();
-	ASSERT (t->status == THREAD_BLOCKED);
-	list_push_back (&ready_list, &t->elem);
-	t->status = THREAD_READY;
-	intr_set_level (old_level);
+	old_level = intr_disable ();													//인터럽트 비활성화
+	ASSERT (t->status == THREAD_BLOCKED);											//스레드가 block 상태이면 이후 코드 실행
+	list_insert_ordered(&ready_list, &t->elem, list_high_priority, NULL);			//ready_list에 우선순위가 높은 순서대로 넣기
+	t->status = THREAD_READY;														//스레드를 THREAD_READY 상태로 바꿈
+	if(!list_empty(&ready_list) && is_higher_priority(now_thread) && now_thread != idle_thread){							//ready_list가 비어있지 않고 현재 스레드의 우선순위가 ready_list의 맨 앞에 있는 스레드의 우선순위보다 더 높으면
+		thread_yield();																//문맥 교환
+	}
+	intr_set_level (old_level);														//인터럽트 다시 활성화
+}
+
+bool
+is_higher_priority(struct thread *t){
+	struct thread *t_first = list_entry(list_front(&ready_list), struct thread, elem); 			//ready_list의 맨 앞에 있는 스레드 꺼내기
+	return t_first->priority > t->priority;													//인자로 들어온 스레드의 우선 순위가 더 높으면 ture 반환
+}
+
+/* Compares the value of two list elements A and B, given
+   auxiliary data AUX.  Returns true if A is less than B, or
+   false if A is greater than or equal to B. */
+
+/* 인자로 들어온 a, b 스레드 중 priority가 a가 더 높으면 true, b가 더 높으면 false를 리턴 */
+bool
+list_high_priority(const struct list_elem *a, const struct list_elem *b, void *aux){
+	
+	struct thread* t_a = list_entry(a, struct thread, elem);
+	struct thread* t_b = list_entry(b, struct thread, elem);
+	
+	//a의 우선순위가 더 작으면 true 리턴
+	return t_a->priority > t_b->priority;
 }
 
 /* Returns the name of the running thread. */
@@ -303,7 +330,7 @@ thread_yield (void) {
 
 	old_level = intr_disable ();
 	if (curr != idle_thread)
-		list_push_back (&ready_list, &curr->elem);
+		list_insert_ordered(&ready_list, &curr->elem, list_high_priority, NULL);
 	do_schedule (THREAD_READY);
 	intr_set_level (old_level);
 }
@@ -527,7 +554,7 @@ thread_launch (struct thread *th) {
  * It's not safe to call printf() in the schedule(). */
 static void
 do_schedule(int status) {
-	ASSERT (intr_get_level () == INTR_OFF);
+	ASSERT (intr_get_level () == INTR_OFF);					//인터럽트가 꺼져있는지 확인하고, 꺼져있으면 이후 코드를 실행
 	ASSERT (thread_current()->status == THREAD_RUNNING);
 	while (!list_empty (&destruction_req)) {
 		struct thread *victim =

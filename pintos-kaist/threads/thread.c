@@ -63,6 +63,7 @@ static void do_schedule(int status);
 static void schedule (void);
 static tid_t allocate_tid (void);
 bool priority_less_func(const struct list_elem *a, const struct list_elem *b, void *aux);
+void  compare_priority(void);
 
 
 /* Returns true if T appears to point to a valid thread. */
@@ -96,10 +97,10 @@ static uint64_t gdt[3] = { 0, 0x00af9a000000ffff, 0x00cf92000000ffff };
    It is not safe to call thread_current() until this function
    finishes. */
 
-bool compare_priority(void){
+void compare_priority(void){
 	/* ready_list가 비어 있으면 아무것도 안 함 */
     if (list_empty(&ready_list))
-        return;
+        return ;
 
 	struct thread *x = list_entry(list_front(&ready_list),struct thread,elem);
 	struct thread *y = thread_current();
@@ -266,7 +267,7 @@ thread_unblock (struct thread *t) {
 	list_insert_ordered (&ready_list, &(t->elem),priority_less_func,NULL);
 	t->status = THREAD_READY;
 	intr_set_level (old_level);
-
+	/* unblock 하고 ready_thread와 현재 실행중인 쓰레드와 우선순위 비교하기 */
 	compare_priority();
 }
 

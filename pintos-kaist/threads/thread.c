@@ -65,6 +65,18 @@ static void do_schedule(int status);
 static void schedule (void);
 static tid_t allocate_tid (void);
 
+
+// feat/prirority_schedule
+static bool sorted_by_priority (const struct list_elem *a, const struct list_elem *b, void *aux){
+	struct thread* t1 = list_entry(a, struct thread, elem);
+	struct thread* t2 = list_entry(b, struct thread, elem);
+
+	return t1->priority > t2->priority;
+}
+// feat/prirority_schedule
+
+
+
 /* Returns true if T appears to point to a valid thread. */
 #define is_thread(t) ((t) != NULL && (t)->magic == THREAD_MAGIC)
 
@@ -208,7 +220,15 @@ thread_create (const char *name, int priority,
 	t->tf.eflags = FLAG_IF;
 
 	/* Add to run queue. */
+
 	thread_unblock (t);
+	if(list_empty(&ready_list)) return;
+	enum intr_level old_level = intr_disable();
+	struct thread* f_t = list_entry(list_front(&ready_list), struct thread, elem);
+	if(!list_empty(&ready_list) && thread_current()->priority < f_t->priority){
+		thread_yield();
+	} 
+	intr_set_level(old_level);
 
 	return tid;
 }
@@ -243,8 +263,11 @@ thread_unblock (struct thread *t) {
 
 	old_level = intr_disable ();
 	ASSERT (t->status == THREAD_BLOCKED);
-	list_push_back (&ready_list, &t->elem);
+	
+	// list_push_back (&ready_list, &t->elem);
+	list_insert_ordered(&ready_list, &(t->elem), sorted_by_priority, NULL);
 	t->status = THREAD_READY;
+
 	intr_set_level (old_level);
 }
 
@@ -305,8 +328,14 @@ thread_yield (void) {
 	ASSERT (!intr_context ());
 
 	old_level = intr_disable ();
-	if (curr != idle_thread)
-		list_push_back (&ready_list, &curr->elem);
+	if (curr != idle_thread){
+		// list_push_back (&ready_list, &curr->elem);
+
+		// feat/priority_schedule
+		list_insert_ordered(&ready_list, &(curr->elem), sorted_by_priority, NULL);
+		// feat/priority_schedule
+	}
+	
 	do_schedule (THREAD_READY);
 	intr_set_level (old_level);
 }
@@ -314,7 +343,15 @@ thread_yield (void) {
 /* Sets the current thread's priority to NEW_PRIORITY. */
 void
 thread_set_priority (int new_priority) {
+	
 	thread_current ()->priority = new_priority;
+	if(list_empty(&ready_list)) return;
+	enum intr_level old_level = intr_disable();
+	struct thread* f_t = list_entry(list_front(&ready_list), struct thread, elem);
+	if(!list_empty(&ready_list) && thread_current()->priority < f_t->priority){
+		thread_yield();
+	} 
+	intr_set_level(old_level);
 }
 
 /* Returns the current thread's priority. */

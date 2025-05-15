@@ -278,11 +278,25 @@ cond_init (struct condition *cond) {
    interrupts disabled, but interrupts will be turned back on if
    we need to sleep. */
 
-   /* 조건 변수 대기 리스트에서 우선순위가 높은 스레드가 앞에 오도록 정렬하는 것 */
+   /*  조건 변수 대기 리스트(cond->waiters)를 정렬할 때 사용하는 비교 함수입니다.
+   각 리스트 요소는 struct semaphore_elem이며, 그 내부의 semaphore.waiters 리스트에
+   실제 대기 중인 thread가 들어 있습니다.
+
+   우선순위는 semaphore.waiters 리스트에 대기 중인 스레드들 중 가장 앞에 있는 스레드의
+   priority로 비교합니다. 하지만 아래 주의사항이 있습니다.
+
+   📌 주의: 이 비교 함수는 cond_wait() 내에서 list_insert_ordered() 시 호출되는데,
+   이 시점에는 아직 sema_down()이 호출되기 전이라, 현재 스레드가
+   waiter.semaphore.waiters 리스트에 들어가지 않았습니다.
+   따라서 대부분의 경우 이 리스트는 아직 비어있는 상태이며,
+   비어 있는 경우에는 예외적으로 우선순위 비교를 생략해야 합니다. */
    bool sema_priority_less_func(const struct list_elem *a, const struct list_elem *b, void *aux){
 	struct semaphore_elem *sema_elem_a  =list_entry(a,struct semaphore_elem, elem);
 	struct semaphore_elem *sema_elem_b  =list_entry(b,struct semaphore_elem, elem);
 
+	// 두 대기 세마포어 리스트가 모두 비어 있다면 우선순위 비교 불가 → 무조건 false 리턴
+	if (list_empty(&sema_elem_a->semaphore.waiters) && list_empty(&sema_elem_b->semaphore.waiters))
+		return false;
 	// waiters리스트가 비어있는 거 예외처리 (안하면 몇개의 쓰레드만 시작하고 전체쓰레드는 시작못함(priority-condvar에서...))
 	if (list_empty(&sema_elem_a->semaphore.waiters)){
 		return false;
@@ -295,7 +309,9 @@ cond_init (struct condition *cond) {
 
 	return x->priority > y->priority;
 }
-
+/* 현재 스레드를 조건 변수에 등록하고 락을 잠시 반납한 뒤,
+다른 스레드가 신호(cond_signal 또는 cond_broadcast)를 줄 때까지 기다렸다가
+다시 락을 획득하고 돌아오는 함수 */
 void
 cond_wait (struct condition *cond, struct lock *lock) {
 	struct semaphore_elem waiter;
@@ -307,7 +323,8 @@ cond_wait (struct condition *cond, struct lock *lock) {
 
 	sema_init (&waiter.semaphore, 0);
 	//list_push_back (&cond->waiters, &waiter.elem);
-	list_insert_ordered (&cond->waiters, &waiter.elem,sema_priority_less_func,NULL);
+	//cond->wait를 정렬하기 위해 waiters 리스트에 삽입할 때, semaphore_elem 구조체에 담긴 세마포어의 대기 스레드 우선순위를 기준으로 삽입하는 코드
+	list_insert_ordered (&cond->waiters, &waiter.elem,sema_priority_less_func,NULL);		  
 	lock_release (lock);
 	sema_down (&waiter.semaphore);
 	lock_acquire (lock);
@@ -328,6 +345,9 @@ cond_signal (struct condition *cond, struct lock *lock UNUSED) {
 	ASSERT (lock_held_by_current_thread (lock));
 
 	if (!list_empty (&cond->waiters)){
+		// cond->waiters는 삽입당시 정렬되어 있지만, 우선순위가 도중에 변경될 수 있다. 따라서 여기에서 다시 한 번 정렬 필요!
+		// 예: thread_set_priority() 등으로 runtime에서 우선순위가 바뀌면 정렬 순서가 무너짐.
+		list_sort(&cond->waiters, sema_priority_less_func, NULL);
 		sema_up (&list_entry (list_pop_front (&cond->waiters),
 					struct semaphore_elem, elem)->semaphore);
 		}

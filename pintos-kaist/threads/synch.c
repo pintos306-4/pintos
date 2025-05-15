@@ -179,19 +179,27 @@ lock_init (struct lock *lock) {
 	sema_init (&lock->semaphore, 1);
 }
 
-/* Acquires LOCK, sleeping until it becomes available if
-   necessary.  The lock must not already be held by the current
-   thread.
+/* LOCK을 획득한다. 필요하다면 LOCK이 사용 가능해질 때까지 잠든다.  
+이때, 현재 스레드가 이미 해당 LOCK을 보유하고 있어서는 안 된다.
 
-   This function may sleep, so it must not be called within an
-   interrupt handler.  This function may be called with
-   interrupts disabled, but interrupts will be turned back on if
-   we need to sleep. */
+이 함수는 잠들 수 있기 때문에, **인터럽트 핸들러 내에서 호출되어서는 안 된다.**  
+인터럽트가 비활성화된 상태에서 호출될 수는 있지만,  
+잠들어야 하는 상황이라면 인터럽트는 자동으로 다시 활성화된다.. */
 void
 lock_acquire (struct lock *lock) {
 	ASSERT (lock != NULL);
 	ASSERT (!intr_context ());
 	ASSERT (!lock_held_by_current_thread (lock));
+
+	//여기에 우선순위를 기부해야한다.  
+	if(	lock->semaphore.value==0){	//누군가가 락을 보유하고 있다는 뜻
+		// cpu를 실행하고 있는 쓰레드의 우선순위가 락을 소유하고 있는 쓰레드의 우선순위보다 크면
+		if(lock->holder->priority < thread_current()->priority){	
+			lock->holder->origin_priority = lock->holder->priority; // 기존 우선순위를 저장하고
+			lock->holder->priority = thread_current()->priority; 	// 우선순위 기부하기
+			lock->holder->is_donated = true;						// 기부받았다고 체크하기
+		}
+	}
 
 	sema_down (&lock->semaphore);
 	lock->holder = thread_current ();
@@ -216,19 +224,28 @@ lock_try_acquire (struct lock *lock) {
 	return success;
 }
 
-/* Releases LOCK, which must be owned by the current thread.
-   This is lock_release function.
+/* 현재 스레드가 소유하고 있는 LOCK을 해제한다.
+   이 함수는 lock_release 함수이다.
 
-   An interrupt handler cannot acquire a lock, so it does not
-   make sense to try to release a lock within an interrupt
-   handler. */
+   인터럽트 핸들러는 락을 획득할 수 없기 때문에,
+   인터럽트 핸들러 내에서 락을 해제하려고 시도하는 것은 의미가 없다 */
 void
 lock_release (struct lock *lock) {
 	ASSERT (lock != NULL);
 	ASSERT (lock_held_by_current_thread (lock));
 
-	lock->holder = NULL;
-	sema_up (&lock->semaphore);
+	//현재 실행중인애가 락을 갖고있음(즉 curr랑 lock->holder랑 같음)
+	struct thread *curr = thread_current(); 
+
+	// 우선순위 복구 해주기-> 왜냐면 락을 풀면 쓰레드는 종료되는 것이 아니라 다른 자원에 다시 접근할 수 도 있다. 
+	// 이때 복구를 해주지 않으면 다른자원에서의 스케줄링이 망가지기때문에 이전 우선순위를 저장하고 복구를 해줘야한다.  
+	if(curr->is_donated){		
+		curr->is_donated=false;
+		curr->priority = curr->origin_priority;
+	}
+
+	lock->holder = NULL;				// 락 소유자를 null로
+	sema_up (&lock->semaphore);			// 대기 중인 스레드가 있다면 우선순위가 가장 높은 스레드를 깨우기
 }
 
 /* Returns true if the current thread holds LOCK, false
@@ -337,6 +354,7 @@ cond_wait (struct condition *cond, struct lock *lock) {
    An interrupt handler cannot acquire a lock, so it does not
    make sense to try to signal a condition variable within an
    interrupt handler. */
+// cond_signal()은 조건 변수(Condition Variable)를 사용할 때, 기다리고 있는 스레드 중 하나를 깨우기 위한 함수  
 void
 cond_signal (struct condition *cond, struct lock *lock UNUSED) {
 	ASSERT (cond != NULL);

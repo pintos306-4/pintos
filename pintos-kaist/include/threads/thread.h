@@ -92,9 +92,11 @@ struct thread {
 	char name[16];                      /* Name (for debugging purposes). */
 	int priority;                       /* Priority. */
 	int64_t end;						/* 쓰레드가 일어나야하는 시간*/
-
+	bool is_donated;					/* 기부를 받았는지 체크 */
+	int origin_priority;				/* 기부 받기 전 우선순위를 저장한 변수   */
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
+	struct list donate_list;			/* 여러명에게 기부를 동시에 받을때 저장할 리스트 */
 
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */

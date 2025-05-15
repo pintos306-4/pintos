@@ -352,6 +352,7 @@ thread_set_priority (int new_priority) {
 }
 
 /* Returns the current thread's priority. */
+/* 현재 실행중인 쓰레드의 우선순위를 반환하는 함수 */
 int
 thread_get_priority (void) {
 	return thread_current ()->priority;
@@ -613,7 +614,7 @@ schedule (void) {
 	}
 }
 
-/* Returns a tid to use for a new thread. */
+/* 새 스레드에 사용할 TID(thread ID)를 반환한다. */
 static tid_t
 allocate_tid (void) {
 	static tid_t next_tid = 1;

@@ -57,6 +57,13 @@ sema_init (struct semaphore *sema, unsigned value) {
    interrupts disabled, but if it sleeps then the next scheduled
    thread will probably turn interrupts back on. This is
    sema_down function. */
+static bool sorted_by_priority (const struct list_elem *a, const struct list_elem *b, void *aux){
+	struct thread* t1 = list_entry(a, struct thread, elem);
+	struct thread* t2 = list_entry(b, struct thread, elem);
+
+	return t1->priority > t2->priority;
+}
+
 void
 sema_down (struct semaphore *sema) {
 	enum intr_level old_level;
@@ -66,7 +73,9 @@ sema_down (struct semaphore *sema) {
 
 	old_level = intr_disable ();
 	while (sema->value == 0) {
-		list_push_back (&sema->waiters, &thread_current ()->elem);
+		// list_push_back (&sema->waiters, &thread_current ()->elem);
+		list_insert_ordered(&sema->waiters, &thread_current()->elem, sorted_by_priority, NULL);
+		
 		thread_block ();
 	}
 	sema->value--;
@@ -150,7 +159,7 @@ sema_test_helper (void *sema_) {
 		sema_up (&sema[1]);
 	}
 }
-
+
 /* Initializes LOCK.  A lock can be held by at most a single
    thread at any given time.  Our locks are not "recursive", that
    is, it is an error for the thread currently holding a lock to
@@ -182,12 +191,22 @@ lock_init (struct lock *lock) {
    interrupt handler.  This function may be called with
    interrupts disabled, but interrupts will be turned back on if
    we need to sleep. */
+
+
+
 void
 lock_acquire (struct lock *lock) {
 	ASSERT (lock != NULL);
 	ASSERT (!intr_context ());
 	ASSERT (!lock_held_by_current_thread (lock));
-
+	
+	
+	int is_unlocked = lock->semaphore.value;
+	if(is_unlocked == 0){
+		if(lock->holder->priority - thread_current()->priority < 0){
+			lock->holder->priority = thread_current()->priority;
+		}
+	}
 	sema_down (&lock->semaphore);
 	lock->holder = thread_current ();
 }
@@ -222,8 +241,10 @@ lock_release (struct lock *lock) {
 	ASSERT (lock != NULL);
 	ASSERT (lock_held_by_current_thread (lock));
 
+	lock->holder->priority = lock->holder->priority_store;
 	lock->holder = NULL;
 	sema_up (&lock->semaphore);
+	
 }
 
 /* Returns true if the current thread holds LOCK, false
@@ -235,7 +256,7 @@ lock_held_by_current_thread (const struct lock *lock) {
 
 	return lock->holder == thread_current ();
 }
-
+
 /* One semaphore in a list. */
 struct semaphore_elem {
 	struct list_elem elem;              /* List element. */

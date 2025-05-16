@@ -110,7 +110,7 @@ sema_up (struct semaphore *sema) {
 
 	old_level = intr_disable ();
 	/* 1) 먼저 세마포어 값을 올려서, 다음 down 재진입 시 value > 0 조건이 만족되도록 한다. */
-	sema->value++;
+	sema->value++;			// 이게 if문보다 앞에있어야 마지막 것이 일어남
 	 /* 2) 대기 리스트에서 가장 높은 우선순위 스레드를 깨운다. */
 	if (!list_empty (&sema->waiters)){
 		list_sort(&sema->waiters,priority_less_func,NULL);		// 쓰레드의 우선순위가 변경될 경우에 대비해서 정렬
@@ -179,6 +179,34 @@ lock_init (struct lock *lock) {
 	sema_init (&lock->semaphore, 1);
 }
 
+/* 쓰레드의 끝나는 시간을 기준으로 리스르틀 오름차순 정렬해주는 함수  */
+bool ascending_priority_func(const struct list_elem *a, const struct list_elem *b, void *aux){
+	struct thread *x =list_entry(a,struct thread, elem);
+	struct thread *y =list_entry(b,struct thread, elem);
+
+	return x->priority > y->priority;
+}
+/* 우선순위를 기부하는 함수 */
+void
+priority_donate(void){
+	struct thread *curr = thread_current();
+	while(curr->wait_on_lock != NULL){
+		struct thread *holder = curr->wait_on_lock->holder;
+		// 이렇게 할 필요없음 왜냐 lock_acquire에서 donate가 일어나는데 그 후 바로 lock_release를 실행하기 때문에
+		// 굳이 donations 리스트에서 꺼내서 줄 필요 없이 현재 실행하는 쓰레드의 우선수위가 
+		// lock -> holder 의 우선순위보다 크면 바로 주면 된다.  
+		// 이와 같이 할 필요 없음 ->"lock->holder->priority = list_entry(list_front(&lock->holder->donations),struct thread, elem)->priority;"
+		// cpu를 실행하고 있는 쓰레드의 우선순위가 락을 소유하고 있는 쓰레드의 우선순위보다 크면
+		if(holder->priority < curr->priority){	
+			holder->priority = curr->priority; // 우선순위 기부하기 (조건은 이 함수 밖에서 줬기 때문에 안 줌!)
+			curr = holder;	
+		}
+		else{
+			break;
+		}
+	}
+}
+
 /* LOCK을 획득한다. 필요하다면 LOCK이 사용 가능해질 때까지 잠든다.  
 이때, 현재 스레드가 이미 해당 LOCK을 보유하고 있어서는 안 된다.
 
@@ -191,18 +219,22 @@ lock_acquire (struct lock *lock) {
 	ASSERT (!intr_context ());
 	ASSERT (!lock_held_by_current_thread (lock));
 
+	struct thread *curr = thread_current();
+
 	//여기에 우선순위를 기부해야한다.  
 	if(	lock->semaphore.value==0){	//누군가가 락을 보유하고 있다는 뜻
-		// cpu를 실행하고 있는 쓰레드의 우선순위가 락을 소유하고 있는 쓰레드의 우선순위보다 크면
-		if(lock->holder->priority < thread_current()->priority){	
-			lock->holder->origin_priority = lock->holder->priority; // 기존 우선순위를 저장하고
-			lock->holder->priority = thread_current()->priority; 	// 우선순위 기부하기
-			lock->holder->is_donated = true;						// 기부받았다고 체크하기
-		}
+
+		// donations 리스트에 삽입하는 기능(우선순위가 큰 놈이 맨앞에 오게-내림차순으로 삽입)
+		list_insert_ordered(&lock->holder->donations,&curr->donate_elem,ascending_priority_func,NULL);
+		curr->wait_on_lock = lock; 	// 현재 실행되는 쓰레드에게도 기다리는 락을 설정해줘야함(어떤 자원을 원하는지 설정)
+			
+		priority_donate();
+		
 	}
 
 	sema_down (&lock->semaphore);
-	lock->holder = thread_current ();
+	curr->wait_on_lock = NULL;
+	lock->holder = curr;
 }
 
 /* Tries to acquires LOCK and returns true if successful or false
@@ -224,6 +256,36 @@ lock_try_acquire (struct lock *lock) {
 	return success;
 }
 
+/* donations 리스트에서 해당 자원을 가진 쓰레드를 지우는 함수 */
+void
+remove_with_lock(struct lock *lock){
+	struct thread *curr = thread_current();
+	struct list_elem *d_elem = list_begin(&curr->donations);
+	
+	while(d_elem != list_end(&curr->donations)){							// 현재 실행되고 있는 donations 리스트안에서
+		struct thread *t = list_entry(d_elem,struct thread,donate_elem);	// d_elem의 쓰레드를 가져와서 
+		if(lock == t->wait_on_lock){										// 그 쓰레드가 기다리고 있는 자원이 지금 해제하는 락과 같다면 
+			list_remove(&t->donate_elem);									// 해당 d_elem을 donations에 삭제해라	
+		}
+
+		d_elem = list_next(d_elem);				// 다음으로 d_elem으로  
+	}
+}	
+/* donations 리스트 중 가장 큰 우선순위를 기부 받거나, 리스트가 비어있으면 기존의 우선순위로 복귀하는 함수 */
+void
+refresh_prioity(void){
+	struct thread *curr = thread_current();
+	if(list_empty(&curr->donations)){
+		// 우선순위 복구 해주기-> 왜냐면 락을 풀면 쓰레드는 종료되는 것이 아니라 다른 자원에 다시 접근할 수 도 있다. 
+		// 이때 복구를 해주지 않으면 다른자원에서의 스케줄링이 망가지기때문에 이전 우선순위를 저장하고 복구를 해줘야한다.  
+		curr->priority = curr->origin_priority;
+	}
+	else{
+		list_sort(&curr->donations,ascending_priority_func,NULL);
+		curr->priority = list_entry(list_front(&curr->donations),struct thread, donate_elem)->priority;
+	}
+}
+
 /* 현재 스레드가 소유하고 있는 LOCK을 해제한다.
    이 함수는 lock_release 함수이다.
 
@@ -234,16 +296,16 @@ lock_release (struct lock *lock) {
 	ASSERT (lock != NULL);
 	ASSERT (lock_held_by_current_thread (lock));
 
-	//현재 실행중인애가 락을 갖고있음(즉 curr랑 lock->holder랑 같음)
-	struct thread *curr = thread_current(); 
+	// 현재 실행중인애가 락을 갖고있음(즉 curr랑 lock->holder랑 같음)
+	// struct thread *curr = thread_current(); 
 
-	// 우선순위 복구 해주기-> 왜냐면 락을 풀면 쓰레드는 종료되는 것이 아니라 다른 자원에 다시 접근할 수 도 있다. 
-	// 이때 복구를 해주지 않으면 다른자원에서의 스케줄링이 망가지기때문에 이전 우선순위를 저장하고 복구를 해줘야한다.  
-	if(curr->is_donated){		
-		curr->is_donated=false;
-		curr->priority = curr->origin_priority;
-	}
+	//donations 리스틀에서 해당 자원의 쓰레드들을 지우는 함수
+	remove_with_lock(lock);
 
+	 
+	// 우선순위를 갱신해주는 함수  
+	refresh_prioity();
+	
 	lock->holder = NULL;				// 락 소유자를 null로
 	sema_up (&lock->semaphore);			// 대기 중인 스레드가 있다면 우선순위가 가장 높은 스레드를 깨우기
 }

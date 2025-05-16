@@ -92,11 +92,13 @@ struct thread {
 	char name[16];                      /* Name (for debugging purposes). */
 	int priority;                       /* Priority. */
 	int64_t end;						/* 쓰레드가 일어나야하는 시간*/
-	bool is_donated;					/* 기부를 받았는지 체크 */
-	int origin_priority;				/* 기부 받기 전 우선순위를 저장한 변수   */
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
-	struct list donate_list;			/* 여러명에게 기부를 동시에 받을때 저장할 리스트 */
+	/* donation을 위한 선언 */
+	int origin_priority;				/* 기부 받기 전 우선순위를 저장한 변수   */
+	struct list donations;				/* 나에게 우선순위를 기부해 준 쓰레드 리스트 */
+	struct lock *wait_on_lock;			/* 내가 기다리고 있는 자원의 lock -> 이 구조체가 필요한 이유 : release할 때 해당 lock을 기다리는 쓰레드들만 삭제해주어야 하기 때문(추적을 위해) */
+	struct list_elem donate_elem;		/* donations로만 리스트를 만들기 위해 donate_elem이 필요(donations 리스트안에 donate_elem으로만 존재) */
 
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */

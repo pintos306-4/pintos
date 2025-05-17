@@ -91,8 +91,8 @@ struct thread {
 	enum thread_status status;          /* Thread state. 스레드 상태를 ENUM으로 선언 */
 	char name[16];                      /* Name (for debugging purposes). */
 	int priority;                       /* Priority. PRI_MIN(0)에서 PRI_MAX(63) 사이 범위에 있는 스레드 우선순위 */
-
-	int64_t start;						/* 스레드 시작 시간 */
+	int initial_priority;               /* 원래 본인의 우선순위 */
+	
 	int64_t end;						/* 스레드가 끝나는 시간 (ticks + 스레드가 수행되는 데 필요한 ticks) */
 
 	/* Shared between thread.c and synch.c. */
@@ -145,5 +145,7 @@ int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
 
 void do_iret (struct intr_frame *tf);
+
+bool list_high_priority(const struct list_elem *a, const struct list_elem *b, void *aux);
 
 #endif /* threads/thread.h */

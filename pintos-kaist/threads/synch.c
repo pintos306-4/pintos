@@ -64,9 +64,12 @@ sema_down (struct semaphore *sema) {
 	ASSERT (sema != NULL);
 	ASSERT (!intr_context ());
 
+	struct thread *curr = thread_current();
+
 	old_level = intr_disable ();
 	while (sema->value == 0) {
-		list_push_back (&sema->waiters, &thread_current ()->elem);
+		//list_push_back (&sema->waiters, &thread_current ()->elem);
+		list_insert_ordered(&sema->waiters, &curr->elem, list_high_priority, NULL);
 		thread_block ();
 	}
 	sema->value--;
@@ -83,17 +86,17 @@ sema_try_down (struct semaphore *sema) {
 	enum intr_level old_level;
 	bool success;
 
-	ASSERT (sema != NULL);
+	ASSERT (sema != NULL);					//sema 변수가 NULL이 아닐 때만 아래 코드를 실행
 
-	old_level = intr_disable ();
-	if (sema->value > 0)
+	old_level = intr_disable ();			//인터럽트 disable
+	if (sema->value > 0)					//sema값이 0보다 크면
 	{
-		sema->value--;
-		success = true;
+		sema->value--;						//sema값을 1 감소시킴
+		success = true;						//sema값이 감소되었으므로 success를 true로 바꾸기
 	}
 	else
-		success = false;
-	intr_set_level (old_level);
+		success = false;					//sema값이 0 이하라서 sema값을 감소시키지 못 했으면 success를 false로 바꾸기
+	intr_set_level (old_level);				//인터럽트 다시 활성화
 
 	return success;
 }
@@ -106,13 +109,15 @@ void
 sema_up (struct semaphore *sema) {
 	enum intr_level old_level;
 
-	ASSERT (sema != NULL);
-
-	old_level = intr_disable ();
-	if (!list_empty (&sema->waiters))
-		thread_unblock (list_entry (list_pop_front (&sema->waiters),
-					struct thread, elem));
+	ASSERT (sema != NULL);												//sema 변수가 NULL이 아닐 때만 아래 코드를 실행
+	
+	old_level = intr_disable ();										//인터럽트 disable
 	sema->value++;
+	if (!list_empty (&sema->waiters)){
+		list_sort(&sema->waiters, list_high_priority, NULL);
+		thread_unblock (list_entry (list_pop_front (&sema->waiters),	//thread_unblock의 인자로 sema->waiters의 가장 앞에 있는 스레드를 전달
+					struct thread, elem));
+	}									//sema->waiters가 비어있지 않다면
 	intr_set_level (old_level);
 }
 
@@ -188,6 +193,12 @@ lock_acquire (struct lock *lock) {
 	ASSERT (!intr_context ());
 	ASSERT (!lock_held_by_current_thread (lock));
 
+	if(lock->semaphore.value==0){
+		if(thread_current()->priority > lock->holder->priority){
+			lock->holder->priority = thread_current()->priority;
+		}
+	}
+
 	sema_down (&lock->semaphore);
 	lock->holder = thread_current ();
 }
@@ -222,7 +233,9 @@ lock_release (struct lock *lock) {
 	ASSERT (lock != NULL);
 	ASSERT (lock_held_by_current_thread (lock));
 
+	lock->holder->priority = lock->holder->initial_priority;
 	lock->holder = NULL;
+
 	sema_up (&lock->semaphore);
 }
 

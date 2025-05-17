@@ -245,9 +245,11 @@ thread_unblock (struct thread *t) {
 	ASSERT (t->status == THREAD_BLOCKED);											//스레드가 block 상태이면 이후 코드 실행
 	list_insert_ordered(&ready_list, &t->elem, list_high_priority, NULL);			//ready_list에 우선순위가 높은 순서대로 넣기
 	t->status = THREAD_READY;														//스레드를 THREAD_READY 상태로 바꿈
+	
 	if(!list_empty(&ready_list) && is_higher_priority(now_thread) && now_thread != idle_thread){							//ready_list가 비어있지 않고 현재 스레드의 우선순위가 ready_list의 맨 앞에 있는 스레드의 우선순위보다 더 높으면
-		thread_yield();																//문맥 교환
+		thread_yield();																//우선순위 스케줄링이므로 ready_list에 올라온 스레드가 현재 실행 중인 스레드보다 우선순위가 더 높으면 문맥 교환해야 함
 	}
+	
 	intr_set_level (old_level);														//인터럽트 다시 활성화
 }
 
@@ -264,11 +266,11 @@ is_higher_priority(struct thread *t){
 /* 인자로 들어온 a, b 스레드 중 priority가 a가 더 높으면 true, b가 더 높으면 false를 리턴 */
 bool
 list_high_priority(const struct list_elem *a, const struct list_elem *b, void *aux){
-	
+		
 	struct thread* t_a = list_entry(a, struct thread, elem);
 	struct thread* t_b = list_entry(b, struct thread, elem);
 	
-	//a의 우선순위가 더 작으면 true 리턴
+	//a의 우선순위가 더 크면 true 리턴
 	return t_a->priority > t_b->priority;
 }
 
@@ -338,7 +340,11 @@ thread_yield (void) {
 /* Sets the current thread's priority to NEW_PRIORITY. */
 void
 thread_set_priority (int new_priority) {
-	thread_current ()->priority = new_priority;
+	//우선순위가 낮아졌으면 cpu를 즉시 양보하게 한다.
+	if(new_priority < thread_current() -> priority){
+		thread_current ()->priority = new_priority;
+		thread_yield();
+	}else thread_current ()->priority = new_priority;
 }
 
 /* Returns the current thread's priority. */
@@ -435,6 +441,7 @@ init_thread (struct thread *t, const char *name, int priority) {
 	strlcpy (t->name, name, sizeof t->name);
 	t->tf.rsp = (uint64_t) t + PGSIZE - sizeof (void *);
 	t->priority = priority;
+	t->initial_priority = priority;
 	t->magic = THREAD_MAGIC;
 }
 
@@ -447,8 +454,10 @@ static struct thread *
 next_thread_to_run (void) {
 	if (list_empty (&ready_list))													//ready_list가 비어있다면
 		return idle_thread;															//idle_thread를 반환
-	else																			//레디큐가 비어있지 않다면
+	else{
+		list_sort(&ready_list, list_high_priority, NULL);
 		return list_entry (list_pop_front (&ready_list), struct thread, elem);		//ready_list의 가장 앞에 위치하는 스레드를 반환
+	}																			//레디큐가 비어있지 않다면
 }
 
 /* Use iretq to launch the thread */
@@ -555,7 +564,7 @@ thread_launch (struct thread *th) {
 static void
 do_schedule(int status) {
 	ASSERT (intr_get_level () == INTR_OFF);					//인터럽트가 꺼져있는지 확인하고, 꺼져있으면 이후 코드를 실행
-	ASSERT (thread_current()->status == THREAD_RUNNING);
+	ASSERT (thread_current()->status == THREAD_RUNNING);	//현재 스레드가 실행 중이면 이후 코드 실행
 	while (!list_empty (&destruction_req)) {
 		struct thread *victim =
 			list_entry (list_pop_front (&destruction_req), struct thread, elem);
@@ -567,17 +576,17 @@ do_schedule(int status) {
 
 static void
 schedule (void) {
-	struct thread *curr = running_thread ();
-	struct thread *next = next_thread_to_run ();
+	struct thread *curr = running_thread ();				//현재 실행 중인 스레드
+	struct thread *next = next_thread_to_run ();			//ready_list의 가장 앞에 위치한 스레드
 
-	ASSERT (intr_get_level () == INTR_OFF);
-	ASSERT (curr->status != THREAD_RUNNING);
-	ASSERT (is_thread (next));
+	ASSERT (intr_get_level () == INTR_OFF);					//인터럽트가 꺼져있는지 확인하고, 꺼져있으면 이후 코드를 실행
+	ASSERT (curr->status != THREAD_RUNNING);				//curr 스레드가 running상태인지 확인하고, running 상태가 아니면 이후 코드를 실행. do_schedule()에서 현재 스레드 상태를 변경한 결과가 THREAD_BLOCKED, THREAD_READY, THREAD_DYING 등이어야 schedule()에서 다음 스레드에게 cpu를 넘겨줄 수 있다. 
+	ASSERT (is_thread (next));								//next 스레드가 유효한 상태인지 확인하고, 유효한 상태이면 이후 코드를 실행
 	/* Mark us as running. */
-	next->status = THREAD_RUNNING;
+	next->status = THREAD_RUNNING;							//next 스레드의 상태를 THREAD_RUNNING으로 변경
 
 	/* Start new time slice. */
-	thread_ticks = 0;
+	thread_ticks = 0;										//thread_ticks는 마지막으로 cpu가 yield된 이후로 몇 tick 지났는지 저장되는 변수. thread_ticks를 0으로 초기화시켜서 time slice를 새로 시작한다.
 
 #ifdef USERPROG
 	/* Activate the new address space. */
@@ -599,7 +608,7 @@ schedule (void) {
 
 		/* Before switching the thread, we first save the information
 		 * of current running. */
-		thread_launch (next);
+		thread_launch (next);								//스레드를 switch한다.
 	}
 }
 

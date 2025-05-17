@@ -106,7 +106,7 @@ timer_sleep (int64_t ticks) {
 
 	old_level = intr_disable();													//인터럽트를 disable시킴 (임계영역 보호)
 	list_insert_ordered (&sleep_list, &curr->elem, list_less_endtime, NULL);	//sleep list에 스레드 넣기
-	thread_block();																//현재 실행 중인 스레드를 sleep상태(blocked 상태)로 바꿔주기 
+	thread_block(); 																//현재 실행 중인 스레드를 sleep상태(blocked 상태)로 바꿔주기 
 	intr_set_level(old_level);													//임계 영역 해제
 }
 

@@ -100,7 +100,6 @@ struct thread {
 
 	// feat/priority_schedule
 	int priority_store;					/*store original priority when changed*/
-	
 	// feat/priority_schedule
 
 #ifdef USERPROG

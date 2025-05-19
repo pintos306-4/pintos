@@ -343,8 +343,12 @@ thread_set_priority (int new_priority) {
 	//우선순위가 낮아졌으면 cpu를 즉시 양보하게 한다.
 	if(new_priority < thread_current() -> priority){
 		thread_current ()->priority = new_priority;
+		thread_current ()->initial_priority = new_priority;
 		thread_yield();
-	}else thread_current ()->priority = new_priority;
+	}else {
+		thread_current ()->priority = new_priority;
+		thread_current ()->initial_priority = new_priority;
+	}
 }
 
 /* Returns the current thread's priority. */

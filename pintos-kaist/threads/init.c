@@ -71,60 +71,74 @@ main (void) {
 	char **argv;
 
 	/* Clear BSS and get machine's RAM size. */
+	/* BSS 영역을 초기화하고, 시스템의 RAM 크기를 확인한다. */
 	bss_init ();
 
 	/* Break command line into arguments and parse options. */
+	/* 커맨드 라인을 인자들로 나누고, 옵션들을 파싱한다. */
 	argv = read_command_line ();
 	argv = parse_options (argv);
 
 	/* Initialize ourselves as a thread so we can use locks,
 	   then enable console locking. */
+	/* 자신을 하나의 스레드로 초기화하여 락을 사용할 수 있도록 하고,
+	   콘솔 락 기능도 활성화한다. */
 	thread_init ();
 	console_init ();
 
 	/* Initialize memory system. */
-	mem_end = palloc_init ();
-	malloc_init ();
-	paging_init (mem_end);
+	/* 메모리 시스템을 초기화한다. */
+	mem_end = palloc_init ();			// 페이지 할당기 초기화
+	malloc_init ();						// 커널 malloc 초기화
+	paging_init (mem_end);				// 페이지 테이블 설정
 
-#ifdef USERPROG
+/* 사용자 프로그램 실행을 위한 TSS와 GDT를 초기화한다. */
+#ifdef USERPROG							
+    //유저 프로그램을 커널이 실행할 수 있게 하는 구조들 초기화
 	tss_init ();
 	gdt_init ();
 #endif
 
 	/* Initialize interrupt handlers. */
-	intr_init ();
-	timer_init ();
-	kbd_init ();
-	input_init ();
+	/* 인터럽트 핸들러들을 초기화한다. */
+	intr_init ();						// 인터럽트 디스크립터 테이블(IDT) 설정
+	timer_init ();						// 타이머 초기화
+	kbd_init ();						// 키보드 입력 초기화
+	input_init ();						// 입력 장치 초기화
 #ifdef USERPROG
+	/* 예외 처리기와 시스템 콜 인터페이스를 초기화한다. */
 	exception_init ();
 	syscall_init ();
 #endif
 	/* Start thread scheduler and enable interrupts. */
-	thread_start ();
-	serial_init_queue ();
-	timer_calibrate ();
+	/* 스레드 스케줄러를 시작하고, 인터럽트를 활성화한다. */
+	thread_start ();					// 쓰레드 실행
+	serial_init_queue ();				// 시리얼 입출력 큐 초기화
+	timer_calibrate ();					// 타이머 루프 수 측정
 
 #ifdef FILESYS
 	/* Initialize file system. */
-	disk_init ();
-	filesys_init (format_filesys);
+	/* 파일 시스템을 초기화한다. */
+	disk_init ();						// 디스크 장치 초기화
+	filesys_init (format_filesys);		// 파일 시스템을 마운트 또는 포맷
 #endif
 
 #ifdef VM
+	/* 가상 메모리 서브시스템을 초기화한다. */
 	vm_init ();
 #endif
 
 	printf ("Boot complete.\n");
 
 	/* Run actions specified on kernel command line. */
-	run_actions (argv);
+	/* 커널 커맨드 라인에 지정된 작업들을 실행한다. */
+	run_actions (argv);					//유저프로그램을 실행하도록 지시하는 함수
 
 	/* Finish up. */
+	/* 종료 작업을 수행한다. */
 	if (power_off_when_done)
-		power_off ();
-	thread_exit ();
+		power_off ();		// 시스템 종료
+	thread_exit ();			// 현재 스레드 종료
 }
 
 /* Clear BSS */
@@ -235,35 +249,41 @@ parse_options (char **argv) {
 }
 
 /* Runs the task specified in ARGV[1]. */
+/* ARGV[1]에 지정된 작업(task)을 실행한다. */
 static void
 run_task (char **argv) {
-	const char *task = argv[1];
+	const char *task = argv[1];					// 유저가 실행하고자 하는 프로그램 이름 (예: "echo hello")
 
 	printf ("Executing '%s':\n", task);
 #ifdef USERPROG
 	if (thread_tests){
-		run_test (task);
+		run_test (task);						// thread_tests 모드일 경우, 테스트 함수 실행
 	} else {
 		process_wait (process_create_initd (task));
+		// 유저 프로그램을 실행하고, 종료될 때까지 기다림
+		// 1. process_create_initd()로 유저 프로그램 시작
+		// 2. process_wait()으로 그 프로그램이 종료될 때까지 대기
 	}
 #else
-	run_test (task);
+	run_test (task);							 // USERPROG가 정의되지 않은 경우, 테스트만 실행
 #endif
 	printf ("Execution of '%s' complete.\n", task);
 }
 
 /* Executes all of the actions specified in ARGV[]
-   up to the null pointer sentinel. */
+   up to the null pointer sentinel. 
+   ARGV[]에 지정된 모든 동작을 널 포인터(끝 표시)까지 실행한다. */
 static void
 run_actions (char **argv) {
 	/* An action. */
 	struct action {
-		char *name;                       /* Action name. */
-		int argc;                         /* # of args, including action name. */
-		void (*function) (char **argv);   /* Function to execute action. */
+		char *name;                       /* Action name. */ //명령어이름 (예 : "ls")
+		int argc;                         /* # of args, including action name. */ // 이 명령어가 요구하는 인자 개수 (명령어 자체 포함)
+		void (*function) (char **argv);   /* Function to execute action. */  // 명령어를 수행하는 함수 포인터
 	};
 
 	/* Table of supported actions. */
+	/* 지원되는 명령어 목록을 정의한 테이블 */
 	static const struct action actions[] = {
 		{"run", 2, run_task},
 #ifdef FILESYS
@@ -281,11 +301,12 @@ run_actions (char **argv) {
 		int i;
 
 		/* Find action name. */
+		/* argv에서 명령어 이름(*argv)을 찾아서 테이블에서 일치하는 action을 찾음 */
 		for (a = actions; ; a++)
 			if (a->name == NULL)
 				PANIC ("unknown action `%s' (use -h for help)", *argv);
 			else if (!strcmp (*argv, a->name))
-				break;
+				break;                                        
 
 		/* Check for required arguments. */
 		for (i = 1; i < a->argc; i++)

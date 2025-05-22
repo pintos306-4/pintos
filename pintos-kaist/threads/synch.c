@@ -112,7 +112,7 @@ sema_up (struct semaphore *sema) {
 	/* 1) 먼저 세마포어 값을 올려서, 다음 down 재진입 시 value > 0 조건이 만족되도록 한다. */
 	sema->value++;
 	 /* 2) 대기 리스트에서 가장 높은 우선순위 스레드를 깨운다. */
-	if (!list_empty (&sema->waiters)){
+ 	if (!list_empty (&sema->waiters)){
 		list_sort(&sema->waiters,priority_less_func,NULL);		// 쓰레드의 우선순위가 변경될 경우에 대비해서 정렬
 		thread_unblock (list_entry (list_pop_front (&sema->waiters),
 					struct thread, elem));
@@ -155,7 +155,7 @@ sema_test_helper (void *sema_) {
 		sema_up (&sema[1]);
 	}
 }
-
+
 /* Initializes LOCK.  A lock can be held by at most a single
    thread at any given time.  Our locks are not "recursive", that
    is, it is an error for the thread currently holding a lock to
@@ -193,8 +193,28 @@ lock_acquire (struct lock *lock) {
 	ASSERT (!intr_context ());
 	ASSERT (!lock_held_by_current_thread (lock));
 
+	struct thread *curr = thread_current();
+	// if (lock->holder){
+	// 	if(lock->holder->priority < curr->priority){
+	// 		lock->holder->priority = curr->priority;
+	// 	}
+	// }
+
+	//여기에 우선순위를 기부해야한다.  
+    if( lock->semaphore.value==0){  //누군가가 락을 보유하고 있다는 뜻
+
+        // donations 리스트에 삽입하는 기능(우선순위가 큰 놈이 맨앞에 오게-내림차순으로 삽입)
+        list_insert_ordered(&lock->holder->donations,&curr->donate_elem,ascending_priority_func,NULL);
+        curr->wait_on_lock = lock;  // 현재 실행되는 쓰레드에게도 기다리는 락을 설정해줘야함(어떤 자원을 원하는지 설정)
+    
+		// 우선순위 기부하는 함수
+        priority_donate();
+	}   
+
 	sema_down (&lock->semaphore);
-	lock->holder = thread_current ();
+    curr->wait_on_lock = NULL;
+
+	lock->holder = curr;
 }
 
 /* Tries to acquires LOCK and returns true if successful or false
@@ -227,8 +247,20 @@ lock_release (struct lock *lock) {
 	ASSERT (lock != NULL);
 	ASSERT (lock_held_by_current_thread (lock));
 
+	//struct thread *curr = thread_current();
+	// curr->priority = curr->original_priority;
+
+    //donations 리스틀에서 해당 자원의 쓰레드들을 지우는 함수
+    remove_with_lock(lock);
+
+     
+    // 우선순위를 갱신해주는 함수  
+    refresh_prioity();
+    
 	lock->holder = NULL;
 	sema_up (&lock->semaphore);
+
+
 }
 
 /* Returns true if the current thread holds LOCK, false
@@ -240,7 +272,7 @@ lock_held_by_current_thread (const struct lock *lock) {
 
 	return lock->holder == thread_current ();
 }
-
+
 /* One semaphore in a list. */
 struct semaphore_elem {
 	struct list_elem elem;              /* List element. */
@@ -279,9 +311,14 @@ cond_init (struct condition *cond) {
    we need to sleep. */
 
    /* 조건 변수 대기 리스트에서 우선순위가 높은 스레드가 앞에 오도록 정렬하는 것 */
-   bool sema_priority_less_func(const struct list_elem *a, const struct list_elem *b, void *aux){
+   bool compare_sema_priority_func(const struct list_elem *a, const struct list_elem *b, void *aux){
 	struct semaphore_elem *sema_elem_a  =list_entry(a,struct semaphore_elem, elem);
 	struct semaphore_elem *sema_elem_b  =list_entry(b,struct semaphore_elem, elem);
+
+	// 두 대기 세마포어 리스트가 모두 비어 있다면 우선순위 비교 불가 → 무조건 false 리턴
+	if (list_empty(&sema_elem_a->semaphore.waiters) && list_empty(&sema_elem_b->semaphore.waiters)){
+		return false;
+	}
 
 	// waiters리스트가 비어있는 거 예외처리 (안하면 몇개의 쓰레드만 시작하고 전체쓰레드는 시작못함(priority-condvar에서...))
 	if (list_empty(&sema_elem_a->semaphore.waiters)){
@@ -307,7 +344,7 @@ cond_wait (struct condition *cond, struct lock *lock) {
 
 	sema_init (&waiter.semaphore, 0);
 	//list_push_back (&cond->waiters, &waiter.elem);
-	list_insert_ordered (&cond->waiters, &waiter.elem,sema_priority_less_func,NULL);
+	list_insert_ordered (&cond->waiters, &waiter.elem,compare_sema_priority_func,NULL);
 	lock_release (lock);
 	sema_down (&waiter.semaphore);
 	lock_acquire (lock);
@@ -328,6 +365,9 @@ cond_signal (struct condition *cond, struct lock *lock UNUSED) {
 	ASSERT (lock_held_by_current_thread (lock));
 
 	if (!list_empty (&cond->waiters)){
+		// cond->waiters는 삽입당시 정렬되어 있지만, 우선순위가 도중에 변경될 수 있다. 따라서 여기에서 다시 한 번 정렬 필요!
+		// 예: thread_set_priority() 등으로 runtime에서 우선순위가 바뀌면 정렬 순서가 무너짐.
+		list_sort(&cond->waiters,compare_sema_priority_func,NULL);
 		sema_up (&list_entry (list_pop_front (&cond->waiters),
 					struct semaphore_elem, elem)->semaphore);
 		}

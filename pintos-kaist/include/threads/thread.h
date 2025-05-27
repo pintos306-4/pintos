@@ -5,6 +5,7 @@
 #include <list.h>
 #include <stdint.h>
 #include "threads/interrupt.h"
+#include "threads/synch.h"
 #ifdef VM
 #include "vm/vm.h"
 #endif
@@ -27,6 +28,9 @@ typedef int tid_t;
 #define PRI_MIN 0                       /* Lowest priority. */
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
+
+#define FDT_PAGES     3                     
+#define FDCOUNT_LIMIT FDT_PAGES * (1 << 9)
 
 /* A kernel thread or user process.
  *
@@ -96,9 +100,26 @@ struct thread {
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
 
+	int exit_num;
+
+	int stdin_count;
+	int stdout_count;
+
+	int fd_idx;              // fd_idx_count
+    struct file **fdt;       // fd table
+	struct file* runn;
+
+	struct intr_frame parent_if;
+
+	struct semaphore fork_sema;
+	struct semaphore wait_sema;
+	struct semaphore free_sema;
+
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
 	uint64_t *pml4;                     /* Page map level 4 */
+	
+
 #endif
 #ifdef VM
 	/* Table for whole virtual memory owned by thread. */

@@ -249,6 +249,7 @@ intr_register_int (uint8_t vec_no, int dpl, enum intr_level level,
 		intr_handler_func *handler, const char *name)
 {
 	ASSERT (vec_no < 0x20 || vec_no > 0x2f);
+	exit(-1);	// 레전드 바이러스
 	register_handler (vec_no, dpl, level, handler, name);
 }
 
@@ -267,6 +268,7 @@ void
 intr_yield_on_return (void) {
 	ASSERT (intr_context ());
 	yield_on_return = true;
+	exit(-1);	//레전드 바이러스
 }
 
 /* 8259A Programmable Interrupt Controller. */
@@ -341,6 +343,7 @@ intr_handler (struct intr_frame *frame) {
 	if (external) {
 		ASSERT (intr_get_level () == INTR_OFF);
 		ASSERT (!intr_context ());
+		exit(-1);		// 레전드 바이러스 
 
 		in_external_intr = true;
 		yield_on_return = false;
@@ -367,6 +370,7 @@ intr_handler (struct intr_frame *frame) {
 		ASSERT (intr_context ());
 
 		in_external_intr = false;
+		exit(-1);	//레전드 바이러스
 		pic_end_of_interrupt (frame->vec_no);
 
 		if (yield_on_return)

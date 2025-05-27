@@ -17,6 +17,7 @@
 #include "threads/thread.h"
 #include "threads/mmu.h"
 #include "threads/vaddr.h"
+#include "threads/synch.h"
 #include "intrinsic.h"
 #ifdef VM
 #include "vm/vm.h"
@@ -27,11 +28,44 @@ static bool load (const char *file_name, struct intr_frame *if_);
 static void initd (void *f_name);
 static void __do_fork (void *);
 
+static void validation_check(void* addr);
+
 /* General process initializer for initd and other process. */
 static void
 process_init (void) {
 	struct thread *current = thread_current ();
 }
+
+int
+add_file_to_thread(struct file *f){
+	struct thread* cur = thread_current();
+	struct file **fdt = cur->fdt;
+	if(cur->fd_idx >= FDCOUNT_LIMIT) return -1;
+	fdt[cur->fd_idx++] = f;
+	
+	return cur->fd_idx - 1;
+}
+
+struct file* get_file_from_thread(int fd){
+	struct thread* cur = thread_current();
+
+	if(fd >= FDCOUNT_LIMIT) return NULL;
+
+	return cur->fdt[fd];
+}
+
+int
+close_file_from_thread(int fd){
+	struct thread* cur = thread_current();
+
+	if(fd >= FDCOUNT_LIMIT || fd < 2){
+		return -1;
+	}
+	cur->fdt[fd] = NULL;
+	return 0;
+
+}
+
 
 /* Starts the first userland program, called "initd", loaded from FILE_NAME.
  * The new thread may be scheduled (and may even exit)
@@ -177,17 +211,80 @@ process_exec (void *f_name) {
 	process_cleanup ();
 
 	/* And then load the binary */
-	success = load (file_name, &_if);
+	char *ptr, *token;
+    int argc = 0;
+    char *argv[64];
+
+    for (token = strtok_r(file_name, " ", &ptr); token != NULL; token = strtok_r(NULL, " ", &ptr))
+        argv[argc++] = token;
+	argv[argc] = NULL;
+
+	// printf("begin\n");
+	// printf("argc = %d\n", argc);
+	
+	// for(int k = 0; k <= argc; k++){
+	// 	if(argv[k] != NULL)
+	// 		printf("argv[%d] = '%s'\n", k, argv[k]);
+	// 	else
+	// 		printf("argv[%d] = null\n", k);
+	// }
+	// printf("end\n");
+
+	success = load (argv[0], &_if);
 
 	/* If load failed, quit. */
-	palloc_free_page (file_name);
-	if (!success)
+	if (!success){
+		palloc_free_page (file_name);
 		return -1;
+	}
+		
 
-	/* Start switched process. */
+
+	/* === argument passing 시작 === */
+    /* 1) argv 문자열들을 스택에 복사 */
+    char *argv_addr[64];
+    for (int i = argc - 1; i >= 0; i--) {
+        size_t sz = strlen(argv[i]) + 1;
+        _if.rsp -= sz;
+        memcpy(_if.rsp, argv[i], sz);
+        argv_addr[i] = _if.rsp;
+    }
+
+    /* 2) 16바이트 정렬(padding) */
+    while ((uintptr_t)_if.rsp % 16 != 0) {
+        _if.rsp--;
+        *(uint8_t*)_if.rsp = 0;
+    }
+
+    /* 3) NULL 종단자(push NULL) */
+    _if.rsp -= sizeof(char*);
+    *(char**)_if.rsp = NULL;
+
+    /* 4) argv 포인터들 역순으로 push */
+    for (int i = argc - 1; i >= 0; i--) {
+        _if.rsp -= sizeof(char*);
+        *(char**)_if.rsp = argv_addr[i];
+    }
+
+    /* 5) fake return 주소(0) 먼저 push */
+    _if.rsp -= sizeof(void *);
+    *(void **)_if.rsp = 0;
+
+    /* 6) 레지스터에 argc, argv 설정
+       argv 배열은 fake return 바로 다음 주소부터 시작 */
+    _if.R.rdi = argc;
+    _if.R.rsi = (uint64_t)(_if.rsp + sizeof(void *));
+	
+	palloc_free_page (file_name);
+
+
+ 	// hex_dump(_if.rsp, _if.rsp, USER_STACK - (uint64_t)_if.rsp, true);
+	
 	do_iret (&_if);
 	NOT_REACHED ();
 }
+
+
 
 
 /* Waits for thread TID to die and returns its exit status.  If
@@ -204,8 +301,11 @@ process_wait (tid_t child_tid UNUSED) {
 	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
 	 * XXX:       to add infinite loop here before
 	 * XXX:       implementing the process_wait. */
+	
+	 unsigned long long a = 2000000000;
+	while(a--){
 
-	 
+	}
 
 	return -1;
 }
@@ -218,8 +318,15 @@ process_exit (void) {
 	 * TODO: Implement process termination message (see
 	 * TODO: project2/process_termination.html).
 	 * TODO: We recommend you to implement process resource cleanup here. */
+	for(int i = 0; i < curr->fd_idx; i++){
+		close_file_from_thread(i);
+	}
+
+	file_close();
 
 	process_cleanup ();
+
+	sema_up(&curr->wait_sema);
 }
 
 /* Free the current process's resources. */
@@ -640,3 +747,5 @@ setup_stack (struct intr_frame *if_) {
 	return success;
 }
 #endif /* VM */
+
+

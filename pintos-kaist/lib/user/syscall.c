@@ -1,5 +1,6 @@
 #include <syscall.h>
 #include <stdint.h>
+#include "threads/thread.h"
 #include "../syscall-nr.h"
 
 __attribute__((always_inline))
@@ -122,6 +123,10 @@ read (int fd, void *buffer, unsigned size) {
 
 int
 write (int fd, const void *buffer, unsigned size) {
+	if (fd == ) {
+		putbuf(buffer, size);											
+		return size;													
+	}
 	return syscall3 (SYS_WRITE, fd, buffer, size);
 }
 

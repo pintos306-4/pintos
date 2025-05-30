@@ -356,8 +356,8 @@ load (const char *file_name, struct intr_frame *if_) {
 	char *save_ptr;
 	char *token;
 
-	printf("start argument set up !");
-	msg("\n");
+	// printf("start argument set up !");
+	// msg("\n");
 
 	for(token = strtok_r(file_name, " ", &save_ptr); token != NULL; token = strtok_r(NULL, " ", &save_ptr)){
 		argv[argc] = token;

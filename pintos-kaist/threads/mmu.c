@@ -144,12 +144,14 @@ pdp_for_each (uint64_t *pdp,
 }
 
 /* Apply FUNC to each available pte entries including kernel's. */
+/* 최상위 페이지 테이블인 PML4(페이지 맵 레벨 4)의 모든 엔트리(페이지 디렉터리 포인터 엔트리, PDPE)를 순회하면서,
+   func이라는 콜백을 재귀적으로 호출”해 주는 역할 */
 bool
-pml4_for_each (uint64_t *pml4, pte_for_each_func *func, void *aux) {
-	for (unsigned i = 0; i < PGSIZE / sizeof(uint64_t *); i++) {
-		uint64_t *pdpe = ptov((uint64_t *) pml4[i]);
-		if (((uint64_t) pdpe) & PTE_P)
-			if (!pdp_for_each ((uint64_t *) PTE_ADDR (pdpe), func, aux, i))
+pml4_for_each (uint64_t *pml4, pte_for_each_func *func, void *aux) {	
+	for (unsigned i = 0; i < PGSIZE / sizeof(uint64_t *); i++) {			// PML4는 4 KB(=PGSIZE) 크기의 페이지이고, 각 엔트리는 8 바이트(uint64_t)이므로,  PGSIZE / sizeof(uint64_t) = 512개 슬롯을 갖습니다.
+		uint64_t *pdpe = ptov((uint64_t *) pml4[i]);						// 각 PML4 엔트리(pml4[i])가 “present”(실제로 매핑된) 상태인지 확인하고, 매핑되어 있으면 다음 단계로 내려갑니다.
+		if (((uint64_t) pdpe) & PTE_P)					
+			if (!pdp_for_each ((uint64_t *) PTE_ADDR (pdpe), func, aux, i))	// 매핑된 PDPE(페이지 디렉터리 포인터 엔트리)마다 pdp_for_each()를 호출해서 다음 레벨(페이지 디렉터리)로 내려가고, 결국 최종적으로 PTE(페이지 테이블 엔트리) 하나하나에 func을 적용하게 해 줍니다.
 				return false;
 	}
 	return true;

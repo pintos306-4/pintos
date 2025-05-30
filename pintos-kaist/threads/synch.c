@@ -57,6 +57,8 @@ sema_init (struct semaphore *sema, unsigned value) {
    interrupts disabled, but if it sleeps then the next scheduled
    thread will probably turn interrupts back on. This is
    sema_down function. */
+
+   /*  */
 void
 sema_down (struct semaphore *sema) {
 	enum intr_level old_level;
@@ -194,11 +196,6 @@ lock_acquire (struct lock *lock) {
 	ASSERT (!lock_held_by_current_thread (lock));
 
 	struct thread *curr = thread_current();
-	// if (lock->holder){
-	// 	if(lock->holder->priority < curr->priority){
-	// 		lock->holder->priority = curr->priority;
-	// 	}
-	// }
 
 	//여기에 우선순위를 기부해야한다.  
     if( lock->semaphore.value==0){  //누군가가 락을 보유하고 있다는 뜻
@@ -246,9 +243,6 @@ void
 lock_release (struct lock *lock) {
 	ASSERT (lock != NULL);
 	ASSERT (lock_held_by_current_thread (lock));
-
-	//struct thread *curr = thread_current();
-	// curr->priority = curr->original_priority;
 
     //donations 리스틀에서 해당 자원의 쓰레드들을 지우는 함수
     remove_with_lock(lock);

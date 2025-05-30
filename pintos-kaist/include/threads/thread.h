@@ -5,6 +5,7 @@
 #include <list.h>
 #include <stdint.h>
 #include "threads/interrupt.h"
+#include "threads/synch.h"
 #ifdef VM
 #include "vm/vm.h"
 #endif
@@ -27,6 +28,9 @@ typedef int tid_t;
 #define PRI_MIN 0                       /* Lowest priority. */
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
+
+/* fd */
+#define FD_MAX 128
 
 /* A kernel thread or user process.
  *
@@ -101,6 +105,20 @@ struct thread {
     struct lock *wait_on_lock;          /* 내가 기다리고 있는 자원의 lock -> 이 구조체가 필요한 이유 : release할 때 해당 lock을 기다리는 쓰레드들만 삭제해주어야 하기 때문(추적을 위해) */
     struct list_elem donate_elem;       /* donations로만 리스트를 만들기 위해 donate_elem이 필요(donations 리스트안에 donate_elem으로만 존재) */
 
+	/* 파일디스크립터를 위한 선언 */
+	struct fd_table *fd_table;          /* fd는 파일번호 한 쓰레드의 여러 파일이 들어갈 수 있으므로 list로 관리 */
+
+	/* fork를 위한 선언 */
+	struct intr_frame parent_if;		/* 부모의 메모리 영역을 저장 */ // 수정
+	struct list child_list;				/* 자식 쓰레드 리스트 */
+	struct list_elem child_elem;		/* 자식 리스트에 저장할 list_elem */
+	struct semaphore fork_sema;			/* 자식이 load가 완료될때까지 기다려야하기에 세마포어를 통해 재워야한다. */
+
+	// /* exit와 wait을 위한 선언*/
+	// bool end_exited;					/* true면 이미 종료된 자식*/
+	int exit_status; 					/* 자식의 종료 코드 (exit()에서 전달된 값)*/
+	struct semaphore wait_sema;			/* wait을 위한 semaphore(자식이 실행되고 종료될때까지 기다려야한다. )*/
+	struct semaphore exit_sema;	
 
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
@@ -115,6 +133,12 @@ struct thread {
 	struct intr_frame tf;               /* Information for switching */
 	unsigned magic;                     /* Detects stack overflow. */
 };
+
+//파일 디스크립터들을 배열로 관리하기 위한 구조체
+struct fd_table{
+    struct file *fd_entries[FD_MAX];        //
+};
+
 
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.

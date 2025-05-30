@@ -28,6 +28,9 @@ typedef int tid_t;
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
 
+#define FD_MAX_SIZE 128					/* 파일 디스크립터 테이블 사이즈 */
+#define FD_MIN_IDX 2					/* 파일 디스크립터 가용 최소 인덱스 */
+
 /* A kernel thread or user process.
  *
  * Each thread structure is stored in its own 4 kB page.  The
@@ -98,6 +101,9 @@ struct thread {
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. 스레드를 Doubly-linked-list의 요소로 포함시킬 때 이전, 다음 스레드를 가리키는 요소 */
 
+	/* Project 2 : system call */
+	struct file **fd_table;	/* file descriptor table : fd 번호를 인덱스로 사용하는 배열 */
+	int fd_idx; 						/* 다음으로 사용 가능한 fd 번호 관리 */
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
 	uint64_t *pml4;                     /* Page map level 4 */

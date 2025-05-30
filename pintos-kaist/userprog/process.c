@@ -26,6 +26,8 @@ static void process_cleanup (void);
 static bool load (const char *file_name, struct intr_frame *if_);
 static void initd (void *f_name);
 static void __do_fork (void *);
+void setup_args(char **argv, int argc, struct intr_frame *if_);
+
 
 /* General process initializer for initd and other process. */
 static void
@@ -50,8 +52,13 @@ process_create_initd (const char *file_name) {
 		return TID_ERROR;
 	strlcpy (fn_copy, file_name, PGSIZE);
 
+	/* 커맨드 라인의 첫 번째 인자를 스레드 이름으로 넘김 */
+	char *save_ptr;
+	char *token;
+	token = strtok_r(file_name, " ", &save_ptr);
+
 	/* Create a new thread to execute FILE_NAME. */
-	tid = thread_create (file_name, PRI_DEFAULT, initd, fn_copy);
+	tid = thread_create (token, PRI_DEFAULT, initd, fn_copy);
 	if (tid == TID_ERROR)
 		palloc_free_page (fn_copy);
 	return tid;
@@ -184,6 +191,17 @@ process_exec (void *f_name) {
 	if (!success)
 		return -1;
 
+	// hex_dump(_if.rsp, _if.rsp, USER_STACK - _if.rsp, true);
+
+	/* file descriptor table 초기화 */
+	struct thread *cur = thread_current();
+	cur->fd_table = malloc(sizeof(struct file*) * FD_MAX_SIZE);
+
+	for(int i=0; i<FD_MAX_SIZE; i++){
+		cur -> fd_table[i] = NULL;
+	}
+	cur -> fd_idx = FD_MIN_IDX;
+
 	/* Start switched process. */
 	do_iret (&_if);
 	NOT_REACHED ();
@@ -204,6 +222,9 @@ process_wait (tid_t child_tid UNUSED) {
 	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
 	 * XXX:       to add infinite loop here before
 	 * XXX:       implementing the process_wait. */
+	for(int i = 0; i<200000000; i++){
+		;
+	}
 	return -1;
 }
 
@@ -329,6 +350,20 @@ load (const char *file_name, struct intr_frame *if_) {
 	bool success = false;
 	int i;
 
+	/* arguments set up */
+	int argc = 0;
+	char *argv[128];
+	char *save_ptr;
+	char *token;
+
+	// printf("start argument set up !");
+	// msg("\n");
+
+	for(token = strtok_r(file_name, " ", &save_ptr); token != NULL; token = strtok_r(NULL, " ", &save_ptr)){
+		argv[argc] = token;
+		argc += 1;
+	}
+
 	/* Allocate and activate page directory. */
 	t->pml4 = pml4_create ();
 	if (t->pml4 == NULL)
@@ -336,9 +371,9 @@ load (const char *file_name, struct intr_frame *if_) {
 	process_activate (thread_current ());
 
 	/* Open executable file. */
-	file = filesys_open (file_name);
+	file = filesys_open(argv[0]);
 	if (file == NULL) {
-		printf ("load: %s: open failed\n", file_name);
+		printf ("load: %s: open failed\n", argv[0]);
 		goto done;
 	}
 
@@ -415,7 +450,14 @@ load (const char *file_name, struct intr_frame *if_) {
 	if_->rip = ehdr.e_entry;
 
 	/* TODO: Your code goes here.
-	 * TODO: Implement argument passing (see project2/argument_passing.html). */
+	 * TODO: Implement argument passing (see project2/argument_passing.html). 
+	file_name을 " " 기준으로 잘라서 argv[]의 0번째부터 차례로 넣기
+	argv[0]은 가상 주소의 가장 낮은 곳, 각 문자열 + null pointer sentinel을 argv의 요소로 넣기
+	rsi가 argv를, rdi가 argc를 가리키게 만들어야 한다.
+	fake return address를 push
+	 */
+
+	setup_args(argv, argc, if_);
 
 	success = true;
 
@@ -423,6 +465,51 @@ done:
 	/* We arrive here whether the load is successful or not. */
 	file_close (file);
 	return success;
+}
+
+/* argv[]에 저장되어 있는 command line 인자를 뒤에서 부터 꺼내서 스택에 push하기 */
+void 
+setup_args(char **argv, int argc, struct intr_frame *if_){
+
+	int total_size = 0; //8bytes 정렬을 위해 저장한 모든 값들의 byte 크기를 누적하여 저장해둠
+	int padding_size = 0; //8bytes 정렬 시 필요한 패딩 사이즈
+	char *addr[argc];
+
+	/* 스택에 args를 반대 방향으로 push */
+	for(int i=0; i<argc; i++){ //argc(argv배열의 길이)만큼 반복
+		int arg_len = strlen(argv[argc-i-1]) + 1; //"\0" 포함
+		if_ -> rsp -= arg_len; //push해준 데이터의 byte 크기 만큼 스택 포인터 감소
+		memcpy(if_ -> rsp, argv[argc-i-1], arg_len); //argv배열의 맨 뒤에 있는 값부터 차례로 스택에 push. 주의할 점 1: 사이즈를 sizeof(argv[argc-i])로 주면 안 된다. argv에 담긴 문자열 크기가 아니라 포인터 크기인 8바이트를 의미하기 때문이다. 그래서 str_len이라는 변수를 따로 만들어서 넣어준다. 주의할 점 2 : rsp를 먼저 줄이고 mempcy를 수행해야 한다. 스택 공간을 먼저 확보한 후 써야 한다.
+		
+		addr[i] = if_ -> rsp; //if_에 값을 하나 저장할 때마다 그 때의 rsp값을 addr[]에 저장
+		total_size += arg_len; //정렬을 위한 사이즈 계산
+	}
+
+	/* 8bytes 정렬 */
+	padding_size = 16 - (total_size % 16); //필요한 패딩 bytes 사이즈 구하기
+	if_ -> rsp -= padding_size; //패딩 사이즈 만큼 스택 포인터 감소
+	memset(if_ -> rsp, 0, padding_size); //해당 사이즈 만큼 0으로 채우기
+
+	/* char* 타입 크기 만큼 0으로 채우기 */
+	if_ -> rsp -= sizeof(char *); 
+	memset(if_ -> rsp, 0, sizeof(char *)); 
+
+	/* 맨 처음에 스택에 들어간 args들이 스택의 어디에 push되었는지에 대한 주소를 push */
+	for(int i=0; i<argc; i++){
+		if_ -> rsp -= sizeof(char *);
+		memcpy(if_ -> rsp, &addr[i], sizeof(char *)); //char* 크기의 공간에 주소를 저장
+	}
+
+	/* rdi에 argc값 저장 */
+	if_->R.rdi = argc;
+
+	/* rsi에 rsp값(현재 스택 포인터) 저장 */
+	if_->R.rsi = if_ -> rsp;
+
+	/* 가짜 return address push */
+	if_ -> rsp -= sizeof(void *);
+	char *fake_ret = NULL;
+	memcpy(if_ -> rsp, &fake_ret, sizeof(void *));
 }
 
 

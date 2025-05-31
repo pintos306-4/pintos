@@ -40,12 +40,15 @@ void seek (int fd, unsigned position);
 #define MSR_LSTAR 0xc0000082        /* Long mode SYSCALL target */
 #define MSR_SYSCALL_MASK 0xc0000084 /* Mask for the eflags */
 
+struct lock file_lock;
+ 
 void
 syscall_init (void) {
 	write_msr(MSR_STAR, ((uint64_t)SEL_UCSEG - 0x10) << 48  |
 			((uint64_t)SEL_KCSEG) << 32);
 	write_msr(MSR_LSTAR, (uint64_t) syscall_entry);
 
+    lock_init(&file_lock);
 	/* The interrupt service rountine should not serve any interrupts
 	 * until the syscall_entry swaps the userland stack to the kernel
 	 * mode stack. Therefore, we masked the FLAG_FL. */
@@ -124,7 +127,6 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	
 }
 
-
 // 주소가 유효한 지 확인하는 함수
 void check_valid_address(void *addr){
     struct thread *cur = thread_current();
@@ -201,6 +203,10 @@ int open(const char *file){
         }
     }
     
+    lock_acquire(&file_lock);
+    file_close(open_file);
+    lock_release(&file_lock);
+    return -1;
 }
 
 // 파일에 데이터를 쓰는 함수 (반환값은 실제로 쓴 바이트 수)
@@ -208,6 +214,10 @@ int write(int fd,const void *buffer, unsigned length){
     // 유효성 검사
     check_valid_buffer(buffer,length);
     struct thread *curr = thread_current();
+
+    if(fd==0){
+        return -1;
+    }
 
     // fd가 1이면 표준 출력(stdout)
     if(fd==1){
@@ -221,8 +231,15 @@ int write(int fd,const void *buffer, unsigned length){
     }
     
     struct file *f = curr->fd_table->fd_entries[fd];
+    if (f ==NULL){
+        return -1;
+    }
 
-    return file_write (f, buffer, length);  // file_write()를 호출하여 실제로 데이터를 쓴다. 반환값은 실제로 쓴 바이트 수임.
+    lock_acquire(&file_lock);
+    int bites_length = file_write (f, buffer, length);  // file_write()를 호출하여 실제로 데이터를 쓴다. 반환값은 실제로 쓴 바이트 수임.
+    lock_release(&file_lock);
+
+    return bites_length;
 }
 
 int filesize(int fd){
@@ -256,14 +273,22 @@ int read (int fd, const void *buffer, unsigned length) {
         return length;
     }
     // fd유효성 검사 
-    if (fd < 0||fd >= FD_MAX|| curr->fd_table->fd_entries[fd]==NULL){
+    if (fd < 0|| fd==1 ||fd >= FD_MAX|| curr->fd_table->fd_entries[fd]==NULL){
         return -1;
     }
 
     //파일 디스크립터 테이블에서 해당 fd에 연결된 struct file *을 꺼내기
     struct file *f = curr->fd_table->fd_entries[fd];
+    if(f==NULL){
+        return -1;
+    }
+
+    lock_acquire(&file_lock);
     //file_read()를 호출하여 실제 파일에서 데이터를 읽는다.반환값은 실제로 읽은 바이트 수다
-    return file_read (f, buffer, length);
+    int bytes_read = file_read (f, buffer, length); 
+    lock_release(&file_lock);
+
+    return bytes_read; 
 }
 
 // 파일 디스크립터 fd에 해당하는 열린 파일을 닫고, 프로세스의 파일 디스크립터 테이블에서 해당 엔트리를 제거하는 함수

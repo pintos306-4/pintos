@@ -114,11 +114,13 @@ struct thread {
 	struct list_elem child_elem;		/* 자식 리스트에 저장할 list_elem */
 	struct semaphore fork_sema;			/* 자식이 load가 완료될때까지 기다려야하기에 세마포어를 통해 재워야한다. */
 
-	// /* exit와 wait을 위한 선언*/
-	// bool end_exited;					/* true면 이미 종료된 자식*/
+	/* exit와 wait을 위한 선언*/
 	int exit_status; 					/* 자식의 종료 코드 (exit()에서 전달된 값)*/
 	struct semaphore wait_sema;			/* wait을 위한 semaphore(자식이 실행되고 종료될때까지 기다려야한다. )*/
 	struct semaphore exit_sema;	
+
+	/* rox를 위한 선언 */
+	struct file *running;				
 
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */

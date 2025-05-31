@@ -353,6 +353,11 @@ process_exit (void) {
 	 * TODO: project2/process_termination.html 문서를 참고하세요).
 	 * TODO: 이곳에서 프로세스의 자원 정리를 구현하는 것을 추천합니다. */
 
+	if(curr->running !=NULL){
+		file_close(curr->running);
+	}
+
+
    /* 1) 부모가 process_wait()에서 sema_down으로 기다리는 wait_sema 올리기 */
     sema_up(&curr->wait_sema);
 
@@ -580,6 +585,11 @@ load (const char *file_name, struct intr_frame *if_) {							// file name(파일
 		}
 	}
 
+
+	file_deny_write(file);
+	t->running = file;
+
+
 	/* Set up stack. */
 	// 스택 셋업 
 	/* setup_stack()을 통해 유저 스택을 설정, 이 함수 안에서 rsp 값(if_->rsp)이 세팅됨 .인자 푸시 작업은 여기서 하거나 나중에 처리됨 */
@@ -644,7 +654,7 @@ load (const char *file_name, struct intr_frame *if_) {							// file name(파일
 
 done:
 	/* We arrive here whether the load is successful or not. */
-	file_close (file);				// 열었던 실행 파일 닫고, 성공 여부 리턴
+	//file_close (file);				// 열었던 실행 파일 닫고, 성공 여부 리턴
 	return success;
 }
 

@@ -62,6 +62,12 @@ static void init_thread (struct thread *, const char *name, int priority);
 static void do_schedule(int status);
 static void schedule (void);
 static tid_t allocate_tid (void);
+bool priority_less_func(const struct list_elem *a, const struct list_elem *b, void *aux);
+void  compare_priority(void);
+bool ascending_priority_func(const struct list_elem *a, const struct list_elem *b, void *aux);
+void priority_donate(void);
+void remove_with_lock(struct lock *lock);
+void refresh_prioity(void);
 
 /* Returns true if T appears to point to a valid thread. */
 #define is_thread(t) ((t) != NULL && (t)->magic == THREAD_MAGIC)
@@ -90,8 +96,30 @@ static uint64_t gdt[3] = { 0, 0x00af9a000000ffff, 0x00cf92000000ffff };
    allocator before trying to create any threads with
    thread_create().
 
+
    It is not safe to call thread_current() until this function
    finishes. */
+
+void compare_priority(void){
+	/* ready_list가 비어 있으면 아무것도 안 함 */
+    if (list_empty(&ready_list))
+        return;
+	
+	struct thread *x = list_entry(list_front(&ready_list),struct thread,elem);
+	struct thread *y = thread_current();
+
+	if(x->priority >y->priority && y!=idle_thread){
+		thread_yield();
+	}
+}
+
+bool priority_less_func(const struct list_elem *a, const struct list_elem *b, void *aux){
+	const struct thread *x =list_entry(a,struct thread, elem);
+	const struct thread *y =list_entry(b,struct thread, elem);
+
+	return x->priority > y->priority;
+}
+
 void
 thread_init (void) {
 	ASSERT (intr_get_level () == INTR_OFF);
@@ -115,6 +143,7 @@ thread_init (void) {
 	init_thread (initial_thread, "main", PRI_DEFAULT);
 	initial_thread->status = THREAD_RUNNING;
 	initial_thread->tid = allocate_tid ();
+	list_init(&initial_thread->child_list);
 }
 
 /* Starts preemptive thread scheduling by enabling interrupts.
@@ -176,6 +205,8 @@ thread_print_stats (void) {
    The code provided sets the new thread's `priority' member to
    PRIORITY, but no actual priority scheduling is implemented.
    Priority scheduling is the goal of Problem 1-3. */
+
+// name이라는 이름과 priority라는 우선순위를 가지고 생성되자마자 func을 실행하는 쓰레드를 만드는 함수 - aux는 func의 필요한 인자
 tid_t
 thread_create (const char *name, int priority,
 		thread_func *function, void *aux) {
@@ -193,6 +224,18 @@ thread_create (const char *name, int priority,
 	init_thread (t, name, priority);
 	tid = t->tid = allocate_tid ();
 
+  /*  fd_table 할당 */
+    t->fd_table = palloc_get_page (PAL_ZERO);
+    if (t->fd_table == NULL)
+      PANIC ("thread_create: fd_table alloc failed");
+    /* 테이블 초기화 (널 포인터로 채우기) */
+    for (int i = 0; i < FD_MAX; i++)
+      t->fd_table->fd_entries[i] = NULL;
+  
+
+	struct thread *cur = thread_current();
+	list_push_back(&cur->child_list, &t->child_elem);
+
 	/* Call the kernel_thread if it scheduled.
 	 * Note) rdi is 1st argument, and rsi is 2nd argument. */
 	t->tf.rip = (uintptr_t) kernel_thread;
@@ -206,7 +249,6 @@ thread_create (const char *name, int priority,
 
 	/* Add to run queue. */
 	thread_unblock (t);
-
 	return tid;
 }
 
@@ -221,7 +263,7 @@ thread_block (void) {
 	ASSERT (!intr_context ());
 	ASSERT (intr_get_level () == INTR_OFF);
 	thread_current ()->status = THREAD_BLOCKED;
-	schedule ();
+	schedule ();				// cpu는 쉬면 안되기에 스케쥴을 돌려준다.
 }
 
 /* Transitions a blocked thread T to the ready-to-run state.
@@ -240,9 +282,12 @@ thread_unblock (struct thread *t) {
 
 	old_level = intr_disable ();
 	ASSERT (t->status == THREAD_BLOCKED);
-	list_push_back (&ready_list, &t->elem);
+	list_insert_ordered (&ready_list, &(t->elem),priority_less_func,NULL);
 	t->status = THREAD_READY;
 	intr_set_level (old_level);
+
+	/* unblock 하고 ready_thread와 현재 실행중인 쓰레드와 우선순위 비교하기 */
+	compare_priority();
 }
 
 /* Returns the name of the running thread. */
@@ -302,16 +347,39 @@ thread_yield (void) {
 	ASSERT (!intr_context ());
 
 	old_level = intr_disable ();
-	if (curr != idle_thread)
-		list_push_back (&ready_list, &curr->elem);
+	if (curr != idle_thread){
+		list_insert_ordered (&ready_list, &(curr->elem),priority_less_func,NULL);
+	}
 	do_schedule (THREAD_READY);
 	intr_set_level (old_level);
 }
 
-/* Sets the current thread's priority to NEW_PRIORITY. */
+/* 현재 스레드의 우선순위를 NEW_PRIORITY로 설정한다. */
 void
 thread_set_priority (int new_priority) {
-	thread_current ()->priority = new_priority;
+	
+	struct thread *curr = thread_current();
+	
+	/* 1) 기본 우선순위 갱신 */
+	curr->original_priority = new_priority;
+
+	/* 2) 현재 스레드에 기부된(prior donations) 우선순위가 없다면
+         또는 사용자가 새로 설정한 우선순위가 더 높다면
+         실제 running priority 도 업데이트 */
+	if(list_empty(&curr->donations) || new_priority > curr->priority){
+		curr->priority = new_priority;
+	}
+
+	// ready_list가 비어있지 않을경우만
+	if (!list_empty(&ready_list)){ 
+		// 현재 실행중인 쓰레드의 우선순위가 변경되면 ready_list와 비교해서 양보해주기 필요
+		struct list_elem *e = list_front(&ready_list);
+		struct thread *t  = list_entry(e, struct thread, elem);
+
+		if (t->priority > thread_current()->priority){
+			thread_yield();
+		}
+	}
 }
 
 /* Returns the current thread's priority. */
@@ -408,7 +476,15 @@ init_thread (struct thread *t, const char *name, int priority) {
 	strlcpy (t->name, name, sizeof t->name);
 	t->tf.rsp = (uint64_t) t + PGSIZE - sizeof (void *);
 	t->priority = priority;
-	t->magic = THREAD_MAGIC;
+	t->original_priority = priority;
+	list_init(&t->donations);
+	t->wait_on_lock = NULL;
+	t->magic = THREAD_MAGIC;	
+	//fork를 위한 초기화
+	list_init(&t->child_list);
+	sema_init(&t->fork_sema,0);
+	sema_init(&t->wait_sema,0);
+	sema_init(&t->exit_sema,0);
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should
@@ -588,3 +664,65 @@ allocate_tid (void) {
 
 	return tid;
 }
+
+/* 쓰레드의 끝나는 시간을 기준으로 리스르틀 오름차순 정렬해주는 함수  */
+bool ascending_priority_func(const struct list_elem *a, const struct list_elem *b, void *aux){
+    struct thread *x =list_entry(a,struct thread, elem);
+    struct thread *y =list_entry(b,struct thread, elem);
+
+    return x->priority > y->priority;
+}
+/* 우선순위를 기부하는 함수 */
+void
+priority_donate(void){
+    struct thread *curr = thread_current();
+    while(curr->wait_on_lock != NULL){
+        struct thread *holder = curr->wait_on_lock->holder;
+        if(holder ==NULL) break;
+        // 이렇게 할 필요없음 왜냐 lock_acquire에서 donate가 일어나는데 그 후 바로 lock_release를 실행하기 때문에
+        // 굳이 donations 리스트에서 꺼내서 줄 필요 없이 현재 실행하는 쓰레드의 우선수위가 
+        // lock -> holder 의 우선순위보다 크면 바로 주면 된다.  
+        // 이와 같이 할 필요 없음 ->"lock->holder->priority = list_entry(list_front(&lock->holder->donations),struct thread, elem)->priority;"
+        // cpu를 실행하고 있는 쓰레드의 우선순위가 락을 소유하고 있는 쓰레드의 우선순위보다 크면
+        if(holder->priority < curr->priority){  
+            holder->priority = curr->priority; // 우선순위 기부하기 (조건은 이 함수 밖에서 줬기 때문에 안 줌!)
+            curr = holder;  
+        }
+        else{
+            break;
+        }
+    }
+}
+
+/* donations 리스트에서 해당 자원을 가진 쓰레드를 지우는 함수 */
+void
+remove_with_lock(struct lock *lock){
+    struct thread *curr = thread_current();
+    struct list_elem *d_elem = list_begin(&curr->donations);
+    
+    while(d_elem != list_end(&curr->donations)){                            // 현재 실행되고 있는 donations 리스트안에서
+        struct thread *t = list_entry(d_elem,struct thread,donate_elem);    // d_elem의 쓰레드를 가져와서 
+        struct list_elem *next = list_next(d_elem);  // 💡 next를 미리 저장
+        if(lock == t->wait_on_lock){                                        // 그 쓰레드가 기다리고 있는 자원이 지금 해제하는 락과 같다면 
+            list_remove(&t->donate_elem);                                   // 해당 d_elem을 donations에 삭제해라   
+        }
+
+        d_elem = next;              // 다음으로 d_elem으로  
+    }
+}   
+
+/* donations 리스트 중 가장 큰 우선순위를 기부 받거나, 리스트가 비어있으면 기존의 우선순위로 복귀하는 함수 */
+void
+refresh_prioity(void){
+    struct thread *curr = thread_current(); 
+    if(list_empty(&curr->donations)){
+        // 우선순위 복구 해주기-> 왜냐면 락을 풀면 쓰레드는 종료되는 것이 아니라 다른 자원에 다시 접근할 수 도 있다. 
+        // 이때 복구를 해주지 않으면 다른자원에서의 스케줄링이 망가지기때문에 이전 우선순위를 저장하고 복구를 해줘야한다.  
+        curr->priority = curr->original_priority;
+    }
+    else{
+        list_sort(&curr->donations,ascending_priority_func,NULL);
+        curr->priority = list_entry(list_begin(&curr->donations),struct thread, donate_elem)->priority;
+    }
+}
+

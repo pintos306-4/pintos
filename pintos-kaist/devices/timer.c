@@ -17,6 +17,9 @@
 #error TIMER_FREQ <= 1000 recommended
 #endif
 
+/* List of processes in THREAD_SLEEP state */
+static struct list sleep_list; 
+
 /* Number of timer ticks since OS booted. */
 static int64_t ticks;
 
@@ -29,6 +32,14 @@ static bool too_many_loops (unsigned loops);
 static void busy_wait (int64_t loops);
 static void real_time_sleep (int64_t num, int32_t denom);
 
+/* 쓰레드의 끝나는 시간을 기준으로 리스르틀 오름차순 정렬해주는 함수  */
+bool sleep_less_func(const struct list_elem *a, const struct list_elem *b, void *aux){
+	struct thread *x =list_entry(a,struct thread, elem);
+	struct thread *y =list_entry(b,struct thread, elem);
+
+	return x->end < y->end;
+}
+
 /* Sets up the 8254 Programmable Interval Timer (PIT) to
    interrupt PIT_FREQ times per second, and registers the
    corresponding interrupt. */
@@ -37,6 +48,8 @@ timer_init (void) {
 	/* 8254 input frequency divided by TIMER_FREQ, rounded to
 	   nearest. */
 	uint16_t count = (1193180 + TIMER_FREQ / 2) / TIMER_FREQ;
+
+	list_init(&sleep_list);		/* sleep_list를 초기화한다.  */
 
 	outb (0x43, 0x34);    /* CW: counter 0, LSB then MSB, mode 2, binary. */
 	outb (0x40, count & 0xff);
@@ -89,12 +102,30 @@ timer_elapsed (int64_t then) {
 
 /* Suspends execution for approximately TICKS timer ticks. */
 void
-timer_sleep (int64_t ticks) {
-	int64_t start = timer_ticks ();
+timer_sleep (int64_t ticks) {			/* tick : 잠자는 시간 */
+	int64_t start = timer_ticks ();		/* timer_sleap이 호출됐을 때의 시간 */
+
+	struct thread *current;				/* 현재 쓰레드를 담을 변수 */
 
 	ASSERT (intr_get_level () == INTR_ON);
+	/* busy-wait 방식 
 	while (timer_elapsed (start) < ticks)
-		thread_yield ();
+	 	thread_yield ();
+	*/
+
+	// 현재 실행중인 쓰레드를 찾는다. 
+	current = thread_current();
+
+	int64_t awaketime =start + ticks; //스레드가 일어나야하는 시간
+	current->end = awaketime;
+
+	enum intr_level prev_status = intr_disable();
+	// timer_sleep을 호출한 쓰레드를 sleep_list에다가 넣어주기
+	list_insert_ordered (&sleep_list, &(current->elem),sleep_less_func,NULL);
+	// 여기서 쓰레드를 block 처리(이때 현재 실행되는 쓰레드의 상태는 sleep으로 변경됨)
+	thread_block();
+	intr_set_level(prev_status);
+	
 }
 
 /* Suspends execution for approximately MS milliseconds. */
@@ -124,7 +155,21 @@ timer_print_stats (void) {
 /* Timer interrupt handler. */
 static void
 timer_interrupt (struct intr_frame *args UNUSED) {
-	ticks++;
+	ticks++;			// cpu가 돌고 있는 현재 시간 
+	
+	while(!list_empty(&sleep_list)){
+		// printf("here\n");
+		struct list_elem *e;
+		e = list_front(&sleep_list);
+	
+		struct thread *t = list_entry(e,struct thread,elem);
+		if (t->end <= ticks){
+			
+			list_pop_front(&sleep_list);
+			thread_unblock(t);//조건을 만족해야하는 애들을 
+		}
+		else break;
+	}
 	thread_tick ();
 }
 

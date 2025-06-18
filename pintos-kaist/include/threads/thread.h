@@ -5,6 +5,7 @@
 #include <list.h>
 #include <stdint.h>
 #include "threads/interrupt.h"
+#include "threads/synch.h"
 #ifdef VM
 #include "vm/vm.h"
 #endif
@@ -27,6 +28,9 @@ typedef int tid_t;
 #define PRI_MIN 0                       /* Lowest priority. */
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
+
+/* fd */
+#define FD_MAX 128
 
 /* A kernel thread or user process.
  *
@@ -91,9 +95,32 @@ struct thread {
 	enum thread_status status;          /* Thread state. */
 	char name[16];                      /* Name (for debugging purposes). */
 	int priority;                       /* Priority. */
-
+	int64_t end;						/* 쓰레드가 일어나야하는 시간*/
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
+
+	/* donation을 위한 선언 */
+	int original_priority;				/* 기부 받기 전 우선순위를 저장한 변수 */
+	struct list donations;              /* 나에게 우선순위를 기부해 준 쓰레드 리스트 */
+    struct lock *wait_on_lock;          /* 내가 기다리고 있는 자원의 lock -> 이 구조체가 필요한 이유 : release할 때 해당 lock을 기다리는 쓰레드들만 삭제해주어야 하기 때문(추적을 위해) */
+    struct list_elem donate_elem;       /* donations로만 리스트를 만들기 위해 donate_elem이 필요(donations 리스트안에 donate_elem으로만 존재) */
+
+	/* 파일디스크립터를 위한 선언 */
+	struct fd_table *fd_table;          /* fd는 파일번호 한 쓰레드의 여러 파일이 들어갈 수 있으므로 list로 관리 */
+
+	/* fork를 위한 선언 */
+	struct intr_frame parent_if;		/* 부모의 메모리 영역을 저장 */ // 수정
+	struct list child_list;				/* 자식 쓰레드 리스트 */
+	struct list_elem child_elem;		/* 자식 리스트에 저장할 list_elem */
+	struct semaphore fork_sema;			/* 자식이 load가 완료될때까지 기다려야하기에 세마포어를 통해 재워야한다. */
+
+	/* exit와 wait을 위한 선언*/
+	int exit_status; 					/* 자식의 종료 코드 (exit()에서 전달된 값)*/
+	struct semaphore wait_sema;			/* wait을 위한 semaphore(자식이 실행되고 종료될때까지 기다려야한다. )*/
+	struct semaphore exit_sema;	
+
+	/* rox를 위한 선언 */
+	struct file *running;				
 
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
@@ -108,6 +135,12 @@ struct thread {
 	struct intr_frame tf;               /* Information for switching */
 	unsigned magic;                     /* Detects stack overflow. */
 };
+
+//파일 디스크립터들을 배열로 관리하기 위한 구조체
+struct fd_table{
+    struct file *fd_entries[FD_MAX];        //
+};
+
 
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
@@ -142,5 +175,12 @@ int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
 
 void do_iret (struct intr_frame *tf);
+bool priority_less_func(const struct list_elem *, const struct list_elem *, void *);
+void  compare_priority(void);
+
+bool ascending_priority_func(const struct list_elem *a, const struct list_elem *b, void *aux);
+void priority_donate(void);
+void remove_with_lock(struct lock *lock);
+void refresh_prioity(void);
 
 #endif /* threads/thread.h */
